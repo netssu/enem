@@ -52,7 +52,8 @@ function padrao() {
     simulados: [],    // histórico: { data, n, ok, seg, limite }
     q: {},      // id -> { s: 'dom'|'rev'|'rec', caixa, prox, h: [[data, letra, ok, segundos, chute]], motivo, nota, video, pulou }
     log: {},    // 'AAAA-MM-DD' -> { n: novas, r: revisões, ok: acertos }
-    sessao: null,
+    sessao: null,     // bloco ativo
+    pausadas: {},     // blocos guardados por tipo: { normal, rev } — um não apaga o outro
   };
 }
 function carregar() {
@@ -353,9 +354,37 @@ function montarSessao(tam, tipo = 'misto', tema = null) {
     if (R.length) itens.push(R.shift());
   }
   if (!itens.length) return false;
-  st.sessao = { itens, i: 0, res: [], criada: hoje(), volta: null };
+  pausarAtiva();
+  const origem = tipo === 'rev' || tipo === 'tema' ? 'rev' : 'normal';
+  if (st.pausadas) delete st.pausadas[origem];   // começar outro do mesmo tipo substitui o guardado
+  st.sessao = { itens, i: 0, res: [], criada: hoje(), volta: null, origem };
   salvar();
   return true;
+}
+// Há dois tipos de bloco, cada um com o seu andamento: o "normal" (questões novas + revisões do dia,
+// começado no Início) e o de correção ("rev": caderno de erros ou treinar um tema). Começar um guarda o outro.
+function aberta(s) { return !!s && !s.avulsa && s.i < s.itens.length; }
+function grupoSessao(s) {
+  if (!s || s.avulsa) return null;
+  if (s.origem) return s.origem === 'normal' ? 'normal' : 'rev';
+  return s.itens.every(it => it.tipo === 'rev') ? 'rev' : 'normal';   // blocos salvos antes desta versão
+}
+function sessaoDe(g) {
+  if (aberta(st.sessao) && grupoSessao(st.sessao) === g) return st.sessao;
+  const pz = st.pausadas?.[g];
+  return aberta(pz) ? pz : null;
+}
+function pausarAtiva() {
+  const s = st.sessao;
+  if (aberta(s)) (st.pausadas ||= {})[grupoSessao(s)] = s;
+}
+function retomar(g) {
+  const s = sessaoDe(g);
+  if (!s) return;
+  if (s !== st.sessao) { pausarAtiva(); st.sessao = s; }
+  if (st.pausadas) delete st.pausadas[g];
+  salvar();
+  if (location.hash === '#/estudar') rota(); else location.hash = '#/estudar';
 }
 function abrirQuestaoAvulsa(id) {
   const r = reg(id);
@@ -601,7 +630,8 @@ function aoSair(fn) { limpar.push(fn); }
 function telaInicio() {
   const p = plano();
   const s = st.sessao;
-  const emAndamento = s && s.i < s.itens.length;
+  const emAndamento = sessaoDe('normal');
+  const revAberta = sessaoDe('rev');
   const pctTotal = pct(p.feitas, p.total);
   const h = hoje();
   // guarda a meta do dia no histórico (para a semana mostrar meta × feito nos dias que passaram)
@@ -650,12 +680,13 @@ function telaInicio() {
       ${passar.length && (faltaHoje === 0 || !p.hojeEstuda) && !p.retaFinal ? `<p class="small" style="margin:10px 0 0">${passar.join('<br>')}</p>` : ''}
       <div class="linha-btns">
         ${emAndamento
-          ? `<a class="btn primario grande" href="#/estudar">Continuar bloco (${s.i + 1}/${s.itens.length})</a>`
+          ? `<button class="btn primario grande" data-acao="continuar">Continuar bloco (${emAndamento.i + 1}/${emAndamento.itens.length})</button>`
           : `<button class="btn primario grande" data-acao="bloco">Fazer um bloco de ${st.cfg.bloco} questões</button>`}
       </div>
       <div class="linha-btns">
         <button class="btn" data-acao="rapido">⚡ Só 5 rapidinhas</button>
-        ${p.vencidas ? `<button class="btn" data-acao="revisar">↺ Só revisões (${p.vencidas})</button>` : ''}
+        ${revAberta ? `<button class="btn" data-acao="cont-rev">↺ Continuar correção (${revAberta.i + 1}/${revAberta.itens.length})</button>`
+          : p.vencidas ? `<button class="btn" data-acao="revisar">↺ Só revisões (${p.vencidas})</button>` : ''}
       </div>
       <p class="small muted" style="margin-bottom:0">Um bloco de ${st.cfg.bloco} leva ~${st.cfg.bloco * 3} min. Pode parar no meio: o app guarda onde você parou.</p>
     </section>
@@ -684,6 +715,8 @@ function telaInicio() {
     </section>
   `;
   $app.querySelector('[data-acao=bloco]')?.addEventListener('click', () => iniciar(st.cfg.bloco));
+  $app.querySelector('[data-acao=continuar]')?.addEventListener('click', () => retomar('normal'));
+  $app.querySelector('[data-acao=cont-rev]')?.addEventListener('click', () => retomar('rev'));
   $app.querySelector('[data-acao=rapido]')?.addEventListener('click', () => iniciar(5));
   $app.querySelector('[data-acao=revisar]')?.addEventListener('click', () => iniciar(p.vencidas, 'rev'));
   ligarTreinar();
@@ -771,7 +804,7 @@ function telaEstudar() {
       <div class="info">${chipArea(q.area)} ${rotulo}${res ? ' <span class="chip" title="Você já respondeu: dá para rever, não para mudar">🔒 Respondida</span>' : ''}</div>
       <div class="info"><span class="timer" id="timer">0:00</span>
         <span class="small muted">${s.avulsa ? '' : `${s.i + 1}/${s.itens.length}`}</span>
-        <a class="btn mini" href="#/" title="Sair (o bloco fica salvo)">Sair</a></div>
+        <a class="btn mini" href="${grupoSessao(s) === 'rev' ? '#/erros' : '#/'}" title="Sair (o bloco fica salvo)">Sair</a></div>
     </div>
     <div class="q-titulo"><h2>${tituloQ(q)}</h2>
       <span class="ferramentas">${linkProva(q) ? `<a class="btn mini" href="${linkProva(q)}" target="_blank" rel="noopener" title="Abrir a página ${q.pag} da prova original">📄 Prova</a>` : ''}${controlesTamanho()}</span></div>
@@ -965,19 +998,21 @@ function telaFimSessao() {
   }
   $app.innerHTML = `
     <section class="card destaque" style="text-align:center">
-      <h1>Bloco concluído!</h1>
+      <h1>${grupoSessao(s) === 'rev' ? 'Correção concluída!' : 'Bloco concluído!'}</h1>
       <p style="font-size:40px;margin:8px 0;font-weight:800">${acertos}/${total}</p>
       <p class="muted">${total ? `${pct(acertos, total)}% de acerto.` : ''} ${p.meta ? `Hoje: ${p.novasHoje}/${p.meta} novas.` : ''}</p>
       <div class="linha-btns" style="justify-content:center">
-        <button class="btn primario" data-acao="mais">Mais um bloco</button>
-        <a class="btn" href="#/">Voltar ao início</a>
+        ${sessaoDe(grupoSessao(s) === 'rev' ? 'normal' : 'rev') ? `<button class="btn primario" data-acao="outro">${grupoSessao(s) === 'rev' ? 'Continuar o bloco de questões' : 'Continuar a correção'}</button>` : ''}
+        <button class="btn ${sessaoDe(grupoSessao(s) === 'rev' ? 'normal' : 'rev') ? '' : 'primario'}" data-acao="mais">${grupoSessao(s) === 'rev' ? 'Corrigir mais' : 'Mais um bloco'}</button>
+        <a class="btn" href="${grupoSessao(s) === 'rev' ? '#/erros' : '#/'}">Voltar</a>
       </div>
     </section>
     ${erros.length ? `<section class="card"><h2>Erradas neste bloco</h2><p class="small muted">Elas voltam automaticamente amanhã.</p><ul class="lista">
       ${erros.map(it => { const q = BYID[it.id]; return `<li><div>${chipArea(q.area)} <span class="tit">${tituloQ(q)}</span></div><button class="btn" data-ver="${q.id}">Rever</button></li>`; }).join('')}
     </ul></section>` : ''}
   `;
-  $app.querySelector('[data-acao=mais]').addEventListener('click', () => iniciar(st.cfg.bloco));
+  $app.querySelector('[data-acao=mais]').addEventListener('click', () => (grupoSessao(s) === 'rev' ? iniciar(st.cfg.bloco, 'rev') : iniciar(st.cfg.bloco)));
+  $app.querySelector('[data-acao=outro]')?.addEventListener('click', () => retomar(grupoSessao(s) === 'rev' ? 'normal' : 'rev'));
   $app.querySelectorAll('[data-ver]').forEach(b => b.addEventListener('click', () => { location.hash = '#/ver/' + b.dataset.ver; }));
 }
 
@@ -1027,15 +1062,17 @@ function telaErros() {
   }
   semana += '</div>';
   const n1 = Math.min(venc.length, tam);
+  const revAberta = sessaoDe('rev');
   $app.innerHTML = `
     <h1>Caderno de erros</h1>
     <p class="muted">${todas.length} em revisão · ${rec} recuperadas</p>
     <section class="card destaque">
       <h2>Refazer agora</h2>
       <p>${msg}</p>
+      ${revAberta ? `<div class="linha-btns"><button class="btn primario grande" data-acao="cont-rev">Continuar correção (${revAberta.i + 1}/${revAberta.itens.length})</button></div>` : ''}
       ${todas.length ? `
       <div class="linha-btns">
-        <button class="btn primario grande" data-acao="bloco">${venc.length ? `Refazer ${n1} ${n1 === 1 ? 'questão' : 'questões'}` : `Adiantar ${Math.min(todas.length, tam)} revisões`}</button>
+        ${revAberta ? '' : `<button class="btn primario grande" data-acao="bloco">${venc.length ? `Refazer ${n1} ${n1 === 1 ? 'questão' : 'questões'}` : `Adiantar ${Math.min(todas.length, tam)} revisões`}</button>`}
       </div>
       <div class="linha-btns"><button class="btn" data-acao="rapido">⚡ Só 5 rapidinhas</button></div>
       <p class="small muted" style="margin-bottom:0">Acertou → volta em 3, 7 e 21 dias. Acertou 4 vezes seguidas → sai do caderno.</p>` : ''}
@@ -1048,6 +1085,7 @@ function telaErros() {
   `;
   ligarTreinar();
   $app.querySelector('[data-acao=bloco]')?.addEventListener('click', () => iniciar(tam, 'rev'));
+  $app.querySelector('[data-acao=cont-rev]')?.addEventListener('click', () => retomar('rev'));
   $app.querySelector('[data-acao=rapido]')?.addEventListener('click', () => iniciar(5, 'rev'));
 }
 

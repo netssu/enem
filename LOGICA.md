@@ -32,7 +32,8 @@ Estratégia: **fazer todas as questões do ENEM (provas azuis 2010–2025) uma v
 ## Explicações com IA: andamento e erros
 
 - Enquanto a IA trabalha aparece a etapa (preparando a imagem → enviando → pensando → escrevendo), os segundos e um botão **Cancelar**. O texto aparece enquanto a IA escreve (Claude, Gemini e ChatGPT).
-- Limite de **120 s**: se a IA não terminar, o pedido é cancelado com um aviso.
+- Limite de **150 s**: se a IA não terminar, o pedido é cancelado com um aviso.
+- **Gemini**: o app pede pensamento curto (`thinkingLevel: low` nos 3.x, `thinkingBudget: 1024` nos 2.5) e que o raciocínio venha junto, para a conexão não ficar muda. Se um modelo não mandar nada em **40 s**, ou estiver fora do ar ou sem cota, o app tenta sozinho `gemini-flash-latest` e `gemini-2.5-flash` (no máximo 3 modelos), avisa qual usou e deixa esse como padrão. O modelo padrão de uma chave nova é o `gemini-flash-latest`.
 - Se der errado, a caixa mostra o motivo em português (chave recusada, limite de uso, modelo inexistente, servidor fora, sem conexão) e os **detalhes**: IA, modelo, onde parou, código HTTP, mensagem da API e navegador — nunca a chave. **Copiar detalhes** copia esse texto; **Tentar de novo** repete.
 - Em **Ajustes › Testar a IA** dá para conferir a chave com um pedido curto, sem gastar uma explicação.
 

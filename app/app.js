@@ -453,6 +453,11 @@ function salvarTinta() {
   for (const k of ks.slice(0, Math.max(0, ks.length - 80))) delete tinta[k];   // guarda só as 80 últimas
   try { localStorage.setItem(KEY_TINTA, JSON.stringify(tinta)); } catch { /* cheio */ }
 }
+// Mouse e caneta (stylus) escrevem direto: é só clicar e arrastar na folha. Com o dedo, a folha rola;
+// para escrever com o dedo, liga-se o botão ✏️ (só aparece em telas de toque).
+// Correção da linha: cada ponto novo é puxado para perto do anterior (estabilizador), pontos muito
+// próximos são ignorados e o traço é desenhado com curvas passando pelos pontos médios.
+const SUAVIZA = 0.4;   // 0..1: quanto o traço segue o ponteiro na hora (menor = mais suave)
 function ligarTinta(id, limpaAntiga) {
   const folha = $app.querySelector('.folha');
   const area = $app.querySelector('.questao-img');
@@ -467,12 +472,32 @@ function ligarTinta(id, limpaAntiga) {
   const bCaneta = $app.querySelector('[data-tinta=caneta]');
   const bDesfazer = $app.querySelector('[data-tinta=desfazer]');
   const bLimpar = $app.querySelector('[data-tinta=limpar]');
-  const estilo = w => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = COR_TINTA; ctx.lineWidth = Math.max(1.6, w * 0.0035); };
+  const estilo = () => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = COR_TINTA; ctx.lineWidth = Math.max(4, w * 0.0065); };
   const X = x => ox + x * w, Y = y => oy + y * w;
+  const meio = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  // trecho k do traço (o mesmo desenho ao vivo e ao redesenhar): de meio(k-2,k-1) a meio(k-1,k), curvando em k-1
+  const trecho = (t, k) => {
+    ctx.beginPath();
+    if (k === 0) { ctx.moveTo(X(t[0][0]), Y(t[0][1])); ctx.lineTo(X(t[0][0]) + 0.01, Y(t[0][1])); }
+    else if (k === 1) { const m = meio(t[0], t[1]); ctx.moveTo(X(t[0][0]), Y(t[0][1])); ctx.lineTo(X(m[0]), Y(m[1])); }
+    else { const a = meio(t[k - 2], t[k - 1]), b = meio(t[k - 1], t[k]); ctx.moveTo(X(a[0]), Y(a[1])); ctx.quadraticCurveTo(X(t[k - 1][0]), Y(t[k - 1][1]), X(b[0]), Y(b[1])); }
+    ctx.stroke();
+  };
+  const final = t => {   // fecha o traço até o último ponto
+    if (t.length < 2) return;
+    const m = meio(t[t.length - 2], t[t.length - 1]), u = t[t.length - 1];
+    ctx.beginPath(); ctx.moveTo(X(m[0]), Y(m[1])); ctx.lineTo(X(u[0]), Y(u[1])); ctx.stroke();
+  };
   const traco = t => {
     ctx.beginPath();
-    t.forEach(([x, y], k) => (k ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
-    if (t.length === 1) ctx.lineTo(X(t[0][0]) + 0.5, Y(t[0][1]));
+    ctx.moveTo(X(t[0][0]), Y(t[0][1]));
+    if (t.length === 1) ctx.lineTo(X(t[0][0]) + 0.01, Y(t[0][1]));
+    else {
+      const m = meio(t[0], t[1]);
+      ctx.lineTo(X(m[0]), Y(m[1]));
+      for (let k = 1; k < t.length - 1; k++) { const b = meio(t[k], t[k + 1]); ctx.quadraticCurveTo(X(t[k][0]), Y(t[k][1]), X(b[0]), Y(b[1])); }
+      ctx.lineTo(X(t[t.length - 1][0]), Y(t[t.length - 1][1]));
+    }
     ctx.stroke();
   };
   const desenhar = () => {
@@ -480,7 +505,7 @@ function ligarTinta(id, limpaAntiga) {
     const dpr = window.devicePixelRatio || 1;
     cv.width = Math.round(area.clientWidth * dpr); cv.height = Math.round(area.clientHeight * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    estilo(w);
+    estilo();
     tracos.forEach(traco);
   };
   const botoes = () => {
@@ -496,34 +521,53 @@ function ligarTinta(id, limpaAntiga) {
   ro.observe(folha);
   ro.observe(area);
   aoSair(() => ro.disconnect());
-  let atual = null;
-  const pos = e => { const f = folha.getBoundingClientRect(); return [+((e.clientX - f.left) / f.width).toFixed(4), +((e.clientY - f.top) / f.width).toFixed(4)]; };
+  let atual = null, liso = null;
+  const pos = e => { const f = folha.getBoundingClientRect(); return [(e.clientX - f.left) / f.width, (e.clientY - f.top) / f.width]; };
+  const arred = p => [+p[0].toFixed(4), +p[1].toFixed(4)];
   cv.addEventListener('pointerdown', e => {
-    if (!canetaLigada || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (e.pointerType === 'touch' && !canetaLigada) return;   // dedo: rola a página
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     try { cv.setPointerCapture(e.pointerId); } catch { /* sem captura: segue desenhando */ }
-    atual = [pos(e)];
+    medir(); estilo();
+    liso = pos(e);
+    atual = [arred(liso)];
     tracos.push(atual);
-    medir();
-    traco(atual);
+    trecho(atual, 0);
   });
   cv.addEventListener('pointermove', e => {
     if (!atual) return;
     const agrupados = e.getCoalescedEvents?.();
     for (const ev of (agrupados && agrupados.length ? agrupados : [e])) {
       const p = pos(ev);
+      liso = [liso[0] + (p[0] - liso[0]) * SUAVIZA, liso[1] + (p[1] - liso[1]) * SUAVIZA];
       const u = atual[atual.length - 1];
-      ctx.beginPath(); ctx.moveTo(X(u[0]), Y(u[1])); ctx.lineTo(X(p[0]), Y(p[1])); ctx.stroke();
-      atual.push(p);
+      if (Math.hypot((liso[0] - u[0]) * w, (liso[1] - u[1]) * w) < 2) continue;   // menos de 2px: ignora
+      atual.push(arred(liso));
+      trecho(atual, atual.length - 1);
     }
   });
-  const fim = () => { if (!atual) return; atual = null; guardar(); };
+  const fim = e => {
+    if (!atual) return;
+    if (e?.type === 'pointerup') {   // termina onde o ponteiro soltou
+      const p = arred(pos(e)), u = atual[atual.length - 1];
+      if (Math.hypot((p[0] - u[0]) * w, (p[1] - u[1]) * w) >= 2) atual.push(p);
+    }
+    final(atual);
+    atual = null;
+    guardar();
+  };
   cv.addEventListener('pointerup', fim);
   cv.addEventListener('pointercancel', fim);
+  // tablet: caneta (stylus) escreve sem rolar a página; o dedo continua rolando
+  cv.addEventListener('touchstart', e => { if ([...e.touches].some(t => t.touchType === 'stylus')) e.preventDefault(); }, { passive: false });
   bCaneta?.addEventListener('click', () => { canetaLigada = !canetaLigada; botoes(); });
-  bDesfazer?.addEventListener('click', () => { tracos.pop(); desenhar(); guardar(); });
+  const desfazer = () => { tracos.pop(); desenhar(); guardar(); };
+  bDesfazer?.addEventListener('click', desfazer);
   bLimpar?.addEventListener('click', () => { tracos.length = 0; desenhar(); guardar(); });
-  aoSair(() => $app.classList.remove('caneta-on'));
+  const teclas = e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && tracos.length && !e.target.matches?.('input, textarea')) { e.preventDefault(); desfazer(); } };
+  document.addEventListener('keydown', teclas);
+  aoSair(() => { document.removeEventListener('keydown', teclas); $app.classList.remove('caneta-on'); });
   botoes();
 }
 function aplicarEscala() {
@@ -533,7 +577,7 @@ function controlesTamanho() {
   return `<span class="tamanho">
     <button class="btn mini" data-tinta="desfazer" title="Desfazer o último traço" hidden>↶</button>
     <button class="btn mini" data-tinta="limpar" title="Apagar os rabiscos" hidden>🗑</button>
-    <button class="btn mini caneta" data-tinta="caneta" aria-pressed="false" title="Caneta azul: rabiscar na folha">✏️ Caneta</button>
+    <button class="btn mini caneta" data-tinta="caneta" aria-pressed="false" title="Escrever com o dedo na folha">✏️ Escrever</button>
     <button class="btn mini" data-esc="-1" title="Diminuir">A−</button><button class="btn mini" data-esc="1" title="Aumentar">A+</button></span>`;
 }
 function ligarTamanho(id, limpaAntiga = true) {

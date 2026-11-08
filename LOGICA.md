@@ -102,9 +102,11 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 
 ## Caneta azul
 
-- O botão **✏️ Caneta** (ao lado do A−/A+) deixa rabiscar na folha da questão com tinta azul, com o dedo, a caneta ou o mouse. Desligada, a folha rola normalmente.
-- **↶** desfaz o último traço e **🗑** apaga tudo. Os rabiscos acompanham o A−/A+.
-- Ficam salvos por questão (as 80 mais recentes) e aparecem de novo em “Rever”. Numa tentativa nova, em outro dia, a folha começa limpa, porque o rascunho antigo entregaria a resposta.
+- **No computador**, é só clicar e arrastar na folha para escrever em azul — não precisa ligar nada. Embaixo da questão há sempre uma área de **rascunho**. **Ctrl+Z** desfaz.
+- **No celular/tablet**, o dedo rola a página; para escrever com o dedo, toque em **✏️ Escrever**. Caneta (stylus) escreve direto.
+- **Correção da linha**: cada ponto novo é puxado para perto do anterior (estabilizador), tremidas menores que 2 px são ignoradas e o traço é desenhado com curvas suaves. A linha é grossa (≈ 0,65% da largura da questão, mínimo 4 px).
+- Dá para rabiscar também na margem em volta da questão. **↶** desfaz o último traço e **🗑** apaga tudo. Os rabiscos acompanham o A−/A+.
+- Ficam salvos por questão (as 80 mais recentes) e aparecem de novo em “Rever”. Numa tentativa nova, em outro dia, a folha começa limpa — o rascunho antigo entregaria a resposta.
 
 ## Metas por dia da semana
 
@@ -117,7 +119,3 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 
 - Na tela inicial: quanto das questões já foi feito e uma frase só sobre quando você termina as questões novas, em mês e ano. Se o seu ritmo dos últimos 14 dias termina antes do planejado, a frase usa o seu ritmo; senão, mostra a data em que você termina seguindo as metas do dia.
 - De propósito, sem contas de revisões nem datas distantes: a meta do dia já se ajusta sozinha.
-
-## Caneta
-
-- Dá para rabiscar também na margem em volta da questão. Com a caneta ligada aparece embaixo uma área de **rascunho** para contas.

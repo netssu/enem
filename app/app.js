@@ -395,8 +395,8 @@ function telaEstudar() {
     <div class="respostas"><div class="dentro">
       <div class="alts" role="radiogroup" aria-label="Alternativas">${'ABCDE'.split('').map(l => `<button class="alt" role="radio" aria-checked="false" data-l="${l}">${l}</button>`).join('')}</div>
       <div class="acoes" id="acoes">
-        <button class="btn" id="btn-dica">💡 Ver como fazer</button>
-        <button class="btn primario" id="btn-conf">Escolha uma letra</button>
+        <button class="btn fantasma" id="btn-dica">💡 Ver como fazer</button>
+        <button class="btn primario" id="btn-conf" hidden>Responder</button>
       </div>
     </div></div>
   `;
@@ -490,7 +490,6 @@ function telaEstudar() {
 
   let escolhida = null;
   const btnConf = document.getElementById('btn-conf');
-  btnConf.classList.add('vazio');
   $app.querySelectorAll('.alt').forEach(b => b.addEventListener('click', () => {
     if (s.res[s.i]) return;
     // um toque seleciona; "Responder" (ou tocar de novo na mesma letra) confirma
@@ -498,16 +497,16 @@ function telaEstudar() {
     escolhida = b.dataset.l;
     $app.querySelectorAll('.alt').forEach(x => { x.classList.toggle('sel', x === b); x.setAttribute('aria-checked', x === b); });
     btnConf.textContent = `Responder ${escolhida}`;
-    btnConf.classList.remove('vazio');
+    btnConf.hidden = false;
   }));
   btnConf.addEventListener('click', () => {
-    if (!escolhida) { btnConf.textContent = 'Toque numa letra primeiro'; return; }
-    responder(escolhida);
+    if (escolhida) responder(escolhida);
   });
   function mostrarDica() {
     if (s.res[s.i]) return;
     item.ajuda = true;
     salvar();
+    document.getElementById('btn-dica').hidden = true;
     const el = document.getElementById('dica');
     el.innerHTML = `
       <section class="card dica">

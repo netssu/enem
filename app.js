@@ -43,7 +43,10 @@ function padrao() {
       ordem: 'intercalado',
       areas: [...ORDEM_AREAS],
       foco: true,   // reforçar pontos fracos nos blocos
-      apiKey: '',
+      apiKey: '',          // chave da Anthropic (Claude)
+      ia: 'anthropic',     // qual IA explica: anthropic | google | openai
+      chaveGoogle: '', modeloGoogle: '',
+      chaveOpenai: '', modeloOpenai: '',
     },
     simulado: null,   // simulado em andamento ou recém-entregue
     simulados: [],    // histórico: { data, n, ok, seg, limite }
@@ -1468,9 +1471,10 @@ function telaAjustes() {
     </section>
     <section class="card">
       <h2>Explicações com IA (opcional)</h2>
-      <p class="small muted">O botão “Por que é X?” manda a imagem da questão para o Claude (${MODELO}) e mostra um resumo curto. Precisa de uma chave da API da Anthropic (console.anthropic.com) — cada explicação custa uns poucos centavos e fica salva no app, então só é paga uma vez. A chave fica guardada apenas neste navegador.</p>
-      <label class="campo" for="apikey">Chave da API</label>
-      <input type="password" id="apikey" placeholder="sk-ant-..." value="${esc(c.apiKey)}" autocomplete="off">
+      <p class="small muted">Os botões “Por que é X?” e “Ver como fazer” mandam a imagem da questão para a IA que você escolher e mostram um resumo curto. Use a sua chave de API: cada explicação custa centavos (ou nada, no plano gratuito do Gemini) e fica salva no app, então só é gerada uma vez. As chaves ficam guardadas só neste navegador.</p>
+      <label class="campo" for="ia">Qual IA explica</label>
+      <select id="ia">${Object.entries(IAS).map(([k, x]) => `<option value="${k}" ${iaAtual() === k ? 'selected' : ''}>${x.nome}</option>`).join('')}</select>
+      <div id="ia-campos"></div>
     </section>
     <section class="card">
       <h2>Backup</h2>
@@ -1490,7 +1494,37 @@ function telaAjustes() {
   g('lingua').addEventListener('change', e => { c.lingua = e.target.value; salvar(); });
   g('ordem').addEventListener('change', e => { c.ordem = e.target.value; salvar(); });
   g('foco').addEventListener('change', e => { c.foco = e.target.checked; salvar(); });
-  g('apikey').addEventListener('change', e => { c.apiKey = e.target.value.trim(); salvar(); });
+  const camposIA = () => {
+    const k = iaAtual(), x = IAS[k];
+    g('ia-campos').innerHTML = `
+      <label class="campo" for="ia-chave">Chave da API — ${x.nome}</label>
+      <input type="password" id="ia-chave" placeholder="${x.ph}" value="${esc(c[x.chave] || '')}" autocomplete="off">
+      <p class="small muted" style="margin:4px 0 0">Crie a chave em <a href="${x.link}" target="_blank" rel="noopener">${x.link.replace('https://', '')}</a>.</p>
+      ${x.modelo ? `<label class="campo" for="ia-modelo">Modelo</label>
+        <select id="ia-modelo"><option value="${esc(c[x.modelo] || '')}">${esc(c[x.modelo] || 'coloque a chave para ver os modelos')}</option></select>
+        <p class="small muted" id="ia-status" style="margin:4px 0 0"></p>`
+      : `<p class="small muted" style="margin:6px 0 0">Modelo: ${MODELO}.</p>`}`;
+    g('ia-chave').addEventListener('change', e => { c[x.chave] = e.target.value.trim(); salvar(); if (x.modelo) carregarModelos(); });
+    g('ia-modelo')?.addEventListener('change', e => { c[x.modelo] = e.target.value; salvar(); });
+    if (x.modelo && c[x.chave]) carregarModelos();
+  };
+  const carregarModelos = async () => {
+    const k = iaAtual(), x = IAS[k], sel = g('ia-modelo'), status = g('ia-status');
+    if (!sel || !c[x.chave]) return;
+    status.textContent = 'Conferindo a chave…';
+    try {
+      const lista = await listarModelos(k, c[x.chave]);
+      if (iaAtual() !== k || !g('ia-modelo')) return;
+      if (!lista.length) throw new Error('nenhum modelo disponível para essa chave');
+      if (!lista.includes(c[x.modelo])) { c[x.modelo] = modeloPadrao(k, lista); salvar(); }
+      sel.innerHTML = lista.map(m => `<option value="${esc(m)}" ${m === c[x.modelo] ? 'selected' : ''}>${esc(m)}</option>`).join('');
+      status.innerHTML = `✓ Chave funcionando · ${lista.length} modelos`;
+    } catch (err) {
+      if (g('ia-status')) status.innerHTML = `<span style="color:var(--erro)">${esc(err.message)}</span>`;
+    }
+  };
+  g('ia').addEventListener('change', e => { c.ia = e.target.value; salvar(); camposIA(); });
+  camposIA();
   const desenharPesos = () => {
     const P = pesos();
     const pl = plano();
@@ -1515,7 +1549,7 @@ function telaAjustes() {
     c.areas = [...$app.querySelectorAll('[data-area]:checked')].map(x => x.dataset.area); salvar();
   }));
   $app.querySelector('[data-acao=exportar]').addEventListener('click', () => {
-    const dados = { versao: 1, exportado: new Date().toISOString(), estado: { ...st, cfg: { ...st.cfg, apiKey: '' } }, explicacoes };
+    const dados = { versao: 1, exportado: new Date().toISOString(), estado: { ...st, cfg: { ...st.cfg, apiKey: '', chaveGoogle: '', chaveOpenai: '' } }, explicacoes };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(dados)], { type: 'application/json' }));
     a.download = `enem-progresso-${hoje()}.json`;
@@ -1528,8 +1562,8 @@ function telaAjustes() {
       const d = JSON.parse(await f.text());
       if (!d.estado || !d.estado.q) throw new Error('arquivo inválido');
       if (!confirm('Substituir o progresso atual pelo do arquivo?')) return;
-      const chave = st.cfg.apiKey;
-      st = { ...padrao(), ...d.estado, cfg: { ...padrao().cfg, ...d.estado.cfg, apiKey: chave } };
+      const chaves = { apiKey: st.cfg.apiKey, chaveGoogle: st.cfg.chaveGoogle, chaveOpenai: st.cfg.chaveOpenai };
+      st = { ...padrao(), ...d.estado, cfg: { ...padrao().cfg, ...d.estado.cfg, ...chaves } };
       explicacoes = { ...explicacoes, ...(d.explicacoes || {}) };
       salvar(); salvarExplicacoes();
       alert('Progresso importado!');
@@ -1538,8 +1572,8 @@ function telaAjustes() {
   });
   $app.querySelector('[data-acao=zerar]').addEventListener('click', () => {
     if (!confirm('Apagar TODO o progresso? Isso não pode ser desfeito (a não ser que você tenha um backup).')) return;
-    const chave = st.cfg.apiKey;
-    st = padrao(); st.cfg.apiKey = chave; salvar(); rota();
+    const { apiKey, ia, chaveGoogle, modeloGoogle, chaveOpenai, modeloOpenai } = st.cfg;
+    st = padrao(); Object.assign(st.cfg, { apiKey, ia, chaveGoogle, modeloGoogle, chaveOpenai, modeloOpenai }); salvar(); rota();
   });
 }
 
@@ -1563,7 +1597,7 @@ function telaLogica() {
       <ul>
         <li>Travou numa questão? <b>🤷 Não sei — ver resolução</b> mostra a resposta, a explicação e o vídeo. Ela entra no caderno de erros, para você tentar sozinho amanhã.</li>
         <li>O app mostra a <b>alternativa certa</b> na hora.</li>
-        <li><b>💡 Por que é X?</b> — um resumo curto do raciocínio (gerado pelo Claude, se você configurar a chave).</li>
+        <li><b>💡 Por que é X?</b> — um resumo curto do raciocínio (gerado pela IA que você escolher em Ajustes: Claude, Gemini ou ChatGPT).</li>
         <li><b>▶ Resolução no YouTube</b> — já abre a busca da questão exata; se achar um vídeo bom, salve o link e o botão passa a abrir direto nele.</li>
         <li><b>Por que errei?</b> — marque o motivo. Com o tempo você vê seu padrão (ex.: muito erro de desatenção = ler o comando com mais calma).</li>
       </ul>
@@ -1587,7 +1621,84 @@ function telaLogica() {
   `;
 }
 
-// ---------------------------------------------------------------- explicação com Claude
+// ---------------------------------------------------------------- explicação com IA
+// Claude (Anthropic, pelo SDK), Gemini (Google) ou ChatGPT (OpenAI), com a chave de API do próprio estudante.
+const IAS = {
+  anthropic: { nome: 'Claude (Anthropic)', chave: 'apiKey', ph: 'sk-ant-...', link: 'https://console.anthropic.com/settings/keys' },
+  google: { nome: 'Gemini (Google)', chave: 'chaveGoogle', modelo: 'modeloGoogle', ph: 'AIza...', link: 'https://aistudio.google.com/apikey' },
+  openai: { nome: 'ChatGPT (OpenAI)', chave: 'chaveOpenai', modelo: 'modeloOpenai', ph: 'sk-...', link: 'https://platform.openai.com/api-keys' },
+};
+function iaAtual() { return IAS[st.cfg.ia] ? st.cfg.ia : 'anthropic'; }
+function chaveIA() { return st.cfg[IAS[iaAtual()].chave] || ''; }
+async function erroHTTP(r) {
+  let m = '';
+  try { const j = await r.json(); m = j.error?.message || j.message || ''; } catch { /* sem corpo */ }
+  const e = new Error(m || `erro ${r.status}`);
+  e.status = r.status;
+  return e;
+}
+// modelos que leem imagem e escrevem texto, do mais novo para o mais antigo
+async function listarModelos(ia, chave) {
+  if (ia === 'google') {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': chave } });
+    if (!r.ok) throw await erroHTTP(r);
+    const j = await r.json();
+    return (j.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent') && /^models\/gemini/.test(m.name) && !/(embedding|tts|audio|image|live|aqa)/.test(m.name))
+      .map(m => m.name.replace('models/', ''))
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  }
+  const r = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${chave}` } });
+  if (!r.ok) throw await erroHTTP(r);
+  const j = await r.json();
+  return (j.data || []).map(m => m.id)
+    .filter(id => /^(gpt-|o\d|chatgpt)/.test(id) && !/(audio|realtime|tts|transcribe|search|image|embedding|instruct|codex|moderation|-\d{4}-\d{2}-\d{2}$)/.test(id))
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+}
+function modeloPadrao(ia, lista) {
+  const pref = ia === 'google'
+    ? [/^gemini-[\d.]+-flash$/, /^gemini-flash-latest$/, /flash$/, /flash/]
+    : [/^gpt-[\d.]+-mini$/, /^gpt-4o-mini$/, /^gpt-[\d.]+$/, /^gpt-/];
+  for (const re of pref) { const m = lista.find(x => re.test(x)); if (m) return m; }
+  return lista[0];
+}
+async function gerarTextoIA(ia, sistema, pedido, imgs) {
+  const x = IAS[ia], chave = st.cfg[x.chave];
+  let modelo = st.cfg[x.modelo];
+  if (!modelo) { modelo = modeloPadrao(ia, await listarModelos(ia, chave)); st.cfg[x.modelo] = modelo; salvar(); }
+  if (ia === 'google') {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chave },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: sistema }] },
+        contents: [{ role: 'user', parts: [...imgs.map(data => ({ inline_data: { mime_type: 'image/webp', data } })), { text: pedido }] }],
+        generationConfig: { maxOutputTokens: 8000 },
+      }),
+    });
+    if (!r.ok) throw await erroHTTP(r);
+    const j = await r.json();
+    const c0 = j.candidates?.[0];
+    if (!c0 || ['SAFETY', 'RECITATION', 'PROHIBITED_CONTENT', 'BLOCKLIST'].includes(c0.finishReason)) return null;
+    return (c0.content?.parts || []).filter(p => p.text && !p.thought).map(p => p.text).join('');
+  }
+  const r = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${chave}` },
+    body: JSON.stringify({
+      model: modelo,
+      max_completion_tokens: 8000,
+      messages: [
+        { role: 'system', content: sistema },
+        { role: 'user', content: [...imgs.map(data => ({ type: 'image_url', image_url: { url: `data:image/webp;base64,${data}` } })), { type: 'text', text: pedido }] },
+      ],
+    }),
+  });
+  if (!r.ok) throw await erroHTTP(r);
+  const j = await r.json();
+  const m = j.choices?.[0]?.message;
+  return m?.refusal ? null : (m?.content || '');
+}
 async function imagemBase64(src) {
   const blob = await (await fetch(src)).blob();
   return await new Promise((ok, falha) => {
@@ -1602,8 +1713,9 @@ let explicando = false;
 async function explicar(q, marcada, el, modo = 'porque') {
   const chave = modo === 'dica' ? `${q.id}:dica` : q.id;
   if (explicacoes[chave]) { el.innerHTML = `<p>${md(explicacoes[chave])}</p>`; return; }
-  if (!st.cfg.apiKey) {
-    el.innerHTML = `<p class="aviso">Para ver a explicação escrita, coloque sua chave da API da Anthropic em <a href="#/ajustes">Ajustes</a>. Enquanto isso, o vídeo do YouTube resolve!</p>`;
+  const ia = iaAtual();
+  if (!chaveIA()) {
+    el.innerHTML = `<p class="aviso">Para ver a explicação escrita, escolha a IA e coloque sua chave de API em <a href="#/ajustes">Ajustes</a> (Claude, Gemini ou ChatGPT). Enquanto isso, o vídeo do YouTube resolve!</p>`;
     return;
   }
   if (location.protocol === 'file:') {
@@ -1614,9 +1726,8 @@ async function explicar(q, marcada, el, modo = 'porque') {
   explicando = true;
   el.innerHTML = '<p class="muted">Pensando na explicação…</p>';
   let Anthropic;
+  const SISTEMA = 'Você é um professor experiente de cursinho pré-ENEM. Responde em português do Brasil, de forma curta, clara e correta. Confie no gabarito oficial informado.';
   try {
-    ({ default: Anthropic } = await import(SDK_URL));
-    const client = new Anthropic({ apiKey: st.cfg.apiKey, dangerouslyAllowBrowser: true });
     const imgs = await Promise.all(q.imgs.map(imagemBase64));
     const errou = marcada && marcada !== q.resp && marcada !== '?';
     const pedido = modo === 'dica' ? [
@@ -1633,13 +1744,23 @@ async function explicar(q, marcada, el, modo = 'porque') {
       '3. Termine com uma linha "Conceito-chave: ..." com o assunto que ele deve revisar.',
       'Use **negrito** só em termos importantes. Sem títulos, sem repetir o enunciado.',
     ].filter(Boolean).join('\n');
+    if (ia !== 'anthropic') {
+      const texto = await gerarTextoIA(ia, SISTEMA, pedido, imgs);
+      if (!texto) { el.innerHTML = '<p class="aviso">A IA não respondeu essa. Tente o vídeo do YouTube.</p>'; return; }
+      explicacoes[chave] = texto;
+      salvarExplicacoes();
+      el.innerHTML = `<p>${md(texto)}</p>`;
+      return;
+    }
+    ({ default: Anthropic } = await import(SDK_URL));
+    const client = new Anthropic({ apiKey: st.cfg.apiKey, dangerouslyAllowBrowser: true });
     const stream = client.beta.messages.stream({
       model: MODELO,
       max_tokens: 8000,
       output_config: { effort: 'medium' },
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      system: 'Você é um professor experiente de cursinho pré-ENEM. Responde em português do Brasil, de forma curta, clara e correta. Confie no gabarito oficial informado.',
+      system: SISTEMA,
       messages: [{
         role: 'user',
         content: [
@@ -1661,7 +1782,13 @@ async function explicar(q, marcada, el, modo = 'porque') {
     el.innerHTML = `<p>${md(texto)}</p>`;
   } catch (err) {
     let msg = 'Não consegui gerar a explicação agora.';
-    if (Anthropic && err instanceof Anthropic.AuthenticationError) msg = 'Chave da API inválida. Confira em Ajustes.';
+    if (ia !== 'anthropic') {
+      const cod = err.status;
+      if (cod === 401 || cod === 403 || (cod === 400 && /api.?key/i.test(err.message))) msg = `Chave do ${IAS[ia].nome} inválida. Confira em Ajustes.`;
+      else if (cod === 429) msg = 'Limite da sua chave atingido (muitas requisições ou sem crédito). Tente de novo daqui a pouco.';
+      else if (cod) msg += ` (${cod} ${esc(err.message)})`;
+      else msg = 'Sem conexão com a internet.';
+    } else if (Anthropic && err instanceof Anthropic.AuthenticationError) msg = 'Chave da API inválida. Confira em Ajustes.';
     else if (Anthropic && err instanceof Anthropic.RateLimitError) msg = 'Muitas requisições seguidas — tente de novo em alguns segundos.';
     else if (Anthropic && err instanceof Anthropic.APIConnectionError) msg = 'Sem conexão com a internet.';
     else if (Anthropic && err instanceof Anthropic.APIError) msg += ` (${err.status ?? ''} ${esc(err.message)})`;

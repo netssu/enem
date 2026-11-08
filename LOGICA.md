@@ -29,6 +29,13 @@ Estratégia: **fazer todas as questões do ENEM (provas azuis 2010–2025) uma v
 - **"Não sei — ver resolução"**: antes de responder, dá para pedir a resolução direto (resposta, explicação e vídeo). Conta como erro: a questão vai para a caixa 1 e volta amanhã para você tentar sozinho.
 - Se uma questão “dominada” for refeita e errada, ela volta para a caixa 1.
 
+## Explicações com IA: andamento e erros
+
+- Enquanto a IA trabalha aparece a etapa (preparando a imagem → enviando → pensando → escrevendo), os segundos e um botão **Cancelar**. O texto aparece enquanto a IA escreve (Claude, Gemini e ChatGPT).
+- Limite de **120 s**: se a IA não terminar, o pedido é cancelado com um aviso.
+- Se der errado, a caixa mostra o motivo em português (chave recusada, limite de uso, modelo inexistente, servidor fora, sem conexão) e os **detalhes**: IA, modelo, onde parou, código HTTP, mensagem da API e navegador — nunca a chave. **Copiar detalhes** copia esse texto; **Tentar de novo** repete.
+- Em **Ajustes › Testar a IA** dá para conferir a chave com um pedido curto, sem gastar uma explicação.
+
 ## Voltar para a questão anterior
 
 - Nos blocos, o botão **←** (ou a tecla ←) volta para a questão anterior só para rever: a alternativa marcada, a certa, a explicação e os rabiscos. A resposta fica travada (🔒 Respondida) e não conta de novo. **→** ou "Próxima" seguem em frente.

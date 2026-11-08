@@ -385,20 +385,23 @@ function telaEstudar() {
       <div class="info">${chipArea(q.area)} ${rotulo}</div>
       <div class="info"><span class="timer" id="timer">0:00</span>
         <span class="small muted">${s.avulsa ? '' : `${s.i + 1}/${s.itens.length}`}</span>
-        <a class="small" href="#/" title="Sair (o bloco fica salvo)">Sair</a></div>
+        <a class="btn mini" href="#/" title="Sair (o bloco fica salvo)">Sair</a></div>
     </div>
-    <div class="q-titulo"><h2>${tituloQ(q)}</h2>${controlesTamanho()}</div>
+    <div class="q-titulo"><h2>${tituloQ(q)}</h2>
+      <span class="ferramentas">${linkProva(q) ? `<a class="btn mini" href="${linkProva(q)}" target="_blank" rel="noopener" title="Abrir a página ${q.pag} da prova original">📄 Prova</a>` : ''}${controlesTamanho()}</span></div>
     <div class="questao-img">${imgsHTML(q)}</div>
-    <p class="small muted">${linkProva(q) ? `<a href="${linkProva(q)}" target="_blank" rel="noopener">📄 Ver na prova original (pág. ${q.pag})</a> · ` : ''}<a href="#" data-acao="pular">${res ? '' : 'Pular esta questão'}</a></p>
     <div id="dica"></div>
     <div id="feedback"></div>
-    <div class="respostas"><div class="dentro">
+    <div class="respostas">
       <div class="alts" role="radiogroup" aria-label="Alternativas">${'ABCDE'.split('').map(l => `<button class="alt" role="radio" aria-checked="false" data-l="${l}">${l}</button>`).join('')}</div>
       <div class="acoes" id="acoes">
-        <button class="btn fantasma" id="btn-dica">💡 Ver como fazer</button>
-        <button class="btn primario" id="btn-conf" hidden>Responder</button>
+        <span class="secundarias">
+          <button class="btn fantasma" data-acao="pular" title="Pular (ela volta outro dia)">Pular</button>
+          <button class="btn fantasma" id="btn-dica">💡 Ver como fazer</button>
+        </span>
+        <button class="btn primario" id="btn-conf" disabled title="Escolha uma letra primeiro">Responder</button>
       </div>
-    </div></div>
+    </div>
   `;
   ligarTamanho();
   // pré-carrega a próxima
@@ -428,6 +431,7 @@ function telaEstudar() {
     timerEl.textContent = `${Math.floor(rr.seg / 60)}:${String(rr.seg % 60).padStart(2, '0')}`;
     $app.querySelectorAll('.alt').forEach(b => {
       b.disabled = true;
+      b.classList.remove('sel');
       if (b.dataset.l === q.resp) b.classList.add('certa');
       else if (b.dataset.l === rr.letra) b.classList.add('errada');
     });
@@ -497,7 +501,7 @@ function telaEstudar() {
     escolhida = b.dataset.l;
     $app.querySelectorAll('.alt').forEach(x => { x.classList.toggle('sel', x === b); x.setAttribute('aria-checked', x === b); });
     btnConf.textContent = `Responder ${escolhida}`;
-    btnConf.hidden = false;
+    btnConf.disabled = false;
   }));
   btnConf.addEventListener('click', () => {
     if (escolhida) responder(escolhida);

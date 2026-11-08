@@ -263,8 +263,8 @@ input[type=number] { padding: 8px 10px; border-radius: 10px; border: 1px solid v
 /* ---------- caneta azul ---------- */
 .folha { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; }
 .questao-img { position: relative; }
-.questao-img > canvas.tinta { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.caneta-on .questao-img > canvas.tinta { pointer-events: auto; touch-action: none; cursor: crosshair; }
+.questao-img > canvas.tinta { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: pan-x pan-y pinch-zoom; cursor: crosshair; }
+.caneta-on .questao-img > canvas.tinta { touch-action: none; }
 .caneta-on .questao-img { outline: 2px solid #1f4fc4; outline-offset: -1px; }
 .btn.mini.caneta.on { background: #1f4fc4; border-color: #1f4fc4; color: #fff; }
 .tamanho { flex-wrap: wrap; justify-content: flex-end; }
@@ -272,8 +272,13 @@ input[type=number] { padding: 8px 10px; border-radius: 10px; border: 1px solid v
   .q-titulo { flex-wrap: wrap; }
   .q-titulo .ferramentas, .q-titulo > .tamanho { margin-left: auto; }
 }
-/* margem de rascunho embaixo da questão, quando a caneta está ligada ou já há rabiscos */
+/* margem de rascunho embaixo da questão: sempre no computador; no celular, com o ✏️ ligado ou já havendo rabiscos */
 .caneta-on .questao-img, .questao-img.tem-tinta { padding-bottom: 180px; }
+@media (hover: hover) and (pointer: fine) {
+  .questao-img { padding-bottom: 180px; }
+  .btn.mini.caneta { display: none; }   /* no computador o mouse já escreve direto */
+  .questao-img::after { content: 'rascunho · clique e arraste para escrever · Ctrl+Z desfaz'; position: absolute; left: 14px; bottom: 8px; font-size: 12px; color: #8a8478; pointer-events: none; }
+}
 .caneta-on .questao-img::after { content: 'rascunho'; position: absolute; left: 14px; bottom: 8px; font-size: 12px; color: #8a8478; pointer-events: none; }
 
 /* ---------- metas da semana ---------- */

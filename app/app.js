@@ -142,6 +142,7 @@ function plano() {
   return {
     total: pool.length, feitas, restantes, fimNovas, diasEstudo, hojeEstuda,
     meta: hojeEstuda && !retaFinal ? meta : 0,
+    ritmoMeta: retaFinal ? 0 : meta,
     novasHoje, ritmo, previsao, retaFinal,
     diasProva: diffDias(h, st.cfg.prova),
     vencidas: vencidas().length,
@@ -314,7 +315,7 @@ function telaInicio() {
       <h2>Seu cronograma</h2>
       <div class="grid2">
         <div class="stat"><b>${p.feitas.toLocaleString('pt-BR')}</b><span>de ${p.total.toLocaleString('pt-BR')} questões feitas (${pctTotal}%)</span></div>
-        <div class="stat"><b>${p.retaFinal ? '—' : p.meta || '0'}</b><span>novas por dia de estudo para terminar até ${fmtCurto(p.fimNovas)}</span></div>
+        <div class="stat"><b>${p.retaFinal ? '—' : p.ritmoMeta}</b><span>novas por dia de estudo para terminar até ${fmtCurto(p.fimNovas)}</span></div>
         <div class="stat"><b>${p.previsao ? (p.previsao.slice(0, 4) === hoje().slice(0, 4) ? fmtCurto(p.previsao) : p.previsao.slice(8, 10) + '/' + p.previsao.slice(5, 7) + '/' + p.previsao.slice(2, 4)) : '—'}</b><span>${p.previsao ? `previsão no seu ritmo atual (${(p.ritmo * 7).toFixed(0)}/semana)` : 'previsão de término aparece depois de 3 dias de estudo'}</span></div>
         <div class="stat"><b>${sequencia()}</b><span>dias seguidos estudando</span></div>
       </div>

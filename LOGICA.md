@@ -105,3 +105,20 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 - O botão **✏️ Caneta** (ao lado do A−/A+) deixa rabiscar na folha da questão com tinta azul, com o dedo, a caneta ou o mouse. Desligada, a folha rola normalmente.
 - **↶** desfaz o último traço e **🗑** apaga tudo. Os rabiscos acompanham o A−/A+.
 - Ficam salvos por questão (as 80 mais recentes) e aparecem de novo em “Rever”. Numa tentativa nova, em outro dia, a folha começa limpa, porque o rascunho antigo entregaria a resposta.
+
+## Metas por dia da semana
+
+- Em **Ajustes**, cada dia da semana tem um ritmo: Folga (0), Leve (½), Normal (1), Puxado (1½×) ou Forte (2×). A meta de cada dia é proporcional: `meta do dia = questões que faltam ÷ soma dos pesos dos dias até a data-limite × peso do dia`.
+- A tela inicial mostra a semana: em cada dia, a meta, o que foi feito, se bateu (✓) ou passou da meta (★ +N) e o acerto. Feito em dia de folga conta como extra.
+- Bateu a meta? A barra passa dos 100% (a parte além da meta fica em outra cor). O app mostra quanto mais um bloco adianta o cronograma e quanto falta para bater o seu recorde de questões num dia.
+- Em **Progresso › Por dia da semana**: nas últimas 8 semanas, quantos de cada dia você estudou, a média de questões, o acerto e as metas batidas.
+
+## Previsão de término
+
+- **Questões novas**: as que faltam ÷ o seu ritmo de novas nos últimos 14 dias (sem histórico, usa as metas).
+- **Tudo dominado**: soma as revisões que os erros vão gerar. Com acerto de primeira `a`, das que faltam umas `(1 − a)` vão para o caderno de erros. Cada uma precisa de 4 acertos seguidos nas revisões; com acerto `s` nas revisões, isso leva em média `(1 − s⁴) ÷ ((1 − s)·s⁴)` tentativas (≈ 6 com 85%, ≈ 10 com 70%). O total (novas + revisões) ÷ o seu ritmo total dá a data. Um erro no último dia ainda precisa de 32 dias de revisões, então a data nunca fica antes de “fim das novas + 32 dias”.
+- Se a data passar do dia da prova, o app avisa.
+
+## Caneta
+
+- Dá para rabiscar também na margem em volta da questão. Com a caneta ligada aparece embaixo uma área de **rascunho** para contas.

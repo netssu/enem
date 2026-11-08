@@ -114,14 +114,6 @@ h3 { font-size: 15px; margin: 0 0 6px; }
 .timer { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 14px; }
 .tag-rev { background: var(--aviso-bg); color: var(--aviso); border-color: transparent; }
 
-.respostas {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 9;
-  background: color-mix(in srgb, var(--card) 96%, transparent);
-  backdrop-filter: blur(8px);
-  border-top: 1px solid var(--line);
-  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-}
-
 .feedback { border-radius: var(--raio); padding: 14px 16px; margin: 12px 0; }
 .feedback.ok { background: var(--ok-bg); }
 .feedback.erro { background: var(--erro-bg); }
@@ -181,14 +173,23 @@ main.larga { max-width: 1100px; }
 
 .card.dica { border-color: color-mix(in srgb, var(--aviso) 45%, var(--line)); }
 
-/* barra de resposta: uma linha fina, letras em círculos de tamanho fixo */
+/* barra de resposta: cartão grudado embaixo, na mesma largura da questão.
+   Com questão curta fica logo abaixo dela; com questão longa gruda no rodapé. */
 [hidden] { display: none !important; }
-.respostas { padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
-.respostas .dentro { max-width: 820px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+.respostas {
+  position: sticky; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 9;
+  display: flex; align-items: center; gap: 12px;
+  margin: 12px 0 8px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 -6px 16px rgba(0, 0, 0, .12);
+}
 .alts { display: flex; gap: 8px; }
 .alt {
-  width: 46px; height: 46px; flex: none; border-radius: 50%;
-  border: 1.5px solid var(--line); background: var(--card); color: var(--text);
+  width: 48px; height: 48px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--line); background: var(--bg); color: var(--text);
   font: 600 19px/1 Georgia, "Iowan Old Style", serif; padding: 0;
   transition: transform .08s, background .12s, border-color .12s;
 }
@@ -199,19 +200,27 @@ main.larga { max-width: 1100px; }
 .alt.errada { background: var(--erro-bg); border-color: var(--erro); color: var(--erro); }
 .alt:disabled { cursor: default; }
 .alt:disabled:not(.certa):not(.errada) { opacity: .45; }
-.respostas .acoes { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.respostas .acoes .btn { height: 44px; padding: 0 18px; white-space: nowrap; }
+.respostas .acoes { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.respostas .secundarias { display: flex; gap: 2px; }
+.respostas .acoes .btn { height: 44px; padding: 0 14px; white-space: nowrap; }
+.respostas #btn-conf, .respostas #btn-prox { min-width: 160px; }
+.btn.primario:disabled { opacity: 1; background: transparent; border-color: var(--line); color: var(--muted); font-weight: 500; }
 .btn.fantasma { background: transparent; border-color: transparent; color: var(--muted); font-weight: 500; }
 .btn.fantasma:hover { color: var(--text); border-color: var(--line); }
 .btn:focus { outline: none; }
 .btn:focus-visible, .alt:focus-visible { outline: 2px solid var(--azul); outline-offset: 2px; }
-main.larga { padding-bottom: 110px; }
-@media (max-width: 560px) {
-  .respostas .dentro { flex-wrap: wrap; gap: 8px; }
+main.larga { padding-bottom: 32px; }
+main.larga:has(.respostas) { padding-bottom: 0; }
+.q-titulo .ferramentas { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.q-topo .btn.mini { padding: 2px 10px; font-size: 13px; }
+@media (max-width: 640px) {
+  .respostas { flex-wrap: wrap; gap: 10px; padding: 10px 12px; }
   .alts { width: 100%; justify-content: space-between; }
-  .alt { width: 50px; height: 50px; }
+  .alt { width: 52px; height: 52px; }
   .respostas .acoes { width: 100%; margin-left: 0; }
-  .respostas .acoes .btn { flex: 1; }
-  main.larga { padding-bottom: 150px; }
+  .respostas .acoes { gap: 4px; }
+  .respostas .secundarias { gap: 0; }
+  .respostas .secundarias .btn { padding: 0 8px; font-size: 14px; }
+  .respostas #btn-conf, .respostas #btn-prox { flex: 1; min-width: 0; }
 }
 .card.dica .aviso { margin: 0 0 4px; }

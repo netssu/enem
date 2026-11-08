@@ -113,11 +113,10 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 - Bateu a meta? A barra passa dos 100% (a parte além da meta fica em outra cor). O app mostra quanto mais um bloco adianta o cronograma e quanto falta para bater o seu recorde de questões num dia.
 - Em **Progresso › Por dia da semana**: nas últimas 8 semanas, quantos de cada dia você estudou, a média de questões, o acerto e as metas batidas.
 
-## Previsão de término
+## Seu caminho
 
-- **Questões novas**: as que faltam ÷ o seu ritmo de novas nos últimos 14 dias (sem histórico, usa as metas).
-- **Tudo dominado**: soma as revisões que os erros vão gerar. Com acerto de primeira `a`, das que faltam umas `(1 − a)` vão para o caderno de erros. Cada uma precisa de 4 acertos seguidos nas revisões; com acerto `s` nas revisões, isso leva em média `(1 − s⁴) ÷ ((1 − s)·s⁴)` tentativas (≈ 6 com 85%, ≈ 10 com 70%). O total (novas + revisões) ÷ o seu ritmo total dá a data. Um erro no último dia ainda precisa de 32 dias de revisões, então a data nunca fica antes de “fim das novas + 32 dias”.
-- Se a data passar do dia da prova, o app avisa.
+- Na tela inicial: quanto das questões já foi feito e uma frase só sobre quando você termina as questões novas, em mês e ano. Se o seu ritmo dos últimos 14 dias termina antes do planejado, a frase usa o seu ritmo; senão, mostra a data em que você termina seguindo as metas do dia.
+- De propósito, sem contas de revisões nem datas distantes: a meta do dia já se ajusta sozinha.
 
 ## Caneta
 

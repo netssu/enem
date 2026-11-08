@@ -219,6 +219,7 @@ function previsaoTermino(p = plano()) {
   if (fimTudo && fimNovas && fimTudo < somaDias(fimNovas, 32)) fimTudo = somaDias(fimNovas, 32);
   return { acerto, temAcerto, s, tentativas, errosPrevistos, revisoes, ritmoTotal, ritmoNovas, real, fimNovas, fimTudo, emRev };
 }
+function mesAno(d) { return parse(d).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }); }
 function dataCurta(d) { return d ? (d.slice(0, 4) === hoje().slice(0, 4) ? fmtCurto(d) : `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}`) : '—'; }
 
 function sequencia() {
@@ -620,18 +621,13 @@ function telaInicio() {
     </section>
 
     <section class="card">
-      <h2>Quando você termina</h2>
-      <div class="grid2">
-        <div class="stat"><b>${p.feitas.toLocaleString('pt-BR')}</b><span>de ${p.total.toLocaleString('pt-BR')} questões feitas (${pctTotal}%)</span></div>
-        <div class="stat"><b>${sequencia()}</b><span>dias seguidos estudando</span></div>
-        <div class="stat"><b>${dataCurta(pt.fimNovas)}</b><span>termina as questões novas ${pt.real ? `no seu ritmo (${Math.round(pt.ritmoNovas * 7)}/semana)` : 'seguindo as metas'}</span></div>
-        <div class="stat"><b>${dataCurta(pt.fimTudo)}</b><span>tudo dominado, contando as revisões dos erros</span></div>
-      </div>
-      <p class="small muted" style="margin:12px 0 0">${pt.temAcerto ? `Você acerta <b>${Math.round(pt.acerto * 100)}%</b> de primeira` : 'Ainda sem histórico: contando com ~60% de acerto de primeira'}, então das ${p.restantes.toLocaleString('pt-BR')} que faltam umas <b>${pt.errosPrevistos.toLocaleString('pt-BR')}</b> devem ir para o caderno de erros.
-        Nas revisões você acerta ${Math.round(pt.s * 100)}%, e cada erro leva em média <b>${pt.tentativas.toFixed(1).replace('.', ',')} revisões</b> até sair (4 acertos seguidos): são ~${pt.revisoes.toLocaleString('pt-BR')} revisões a mais${pt.real ? `, no seu ritmo de ${Math.round(pt.ritmoTotal * 7)} questões por semana` : ''}.
-        ${pt.real ? '' : 'A previsão fica mais certa depois de 3 dias de estudo.'}</p>
-      ${pt.fimTudo && pt.fimTudo > st.cfg.prova && !p.retaFinal ? `<p class="aviso" style="margin-top:12px">Nesse ritmo, o caderno de erros só fica limpo depois da prova (${fmt(st.cfg.prova)}). Acertar mais de primeira e fazer as revisões em dia é o que mais adianta — ou suba a meta de alguns dias em <a href="#/ajustes">Ajustes</a>.</p>`
-        : pt.fimTudo && !p.retaFinal ? `<p class="small" style="margin:8px 0 0">✅ Dá tempo: ${Math.max(0, diffDias(pt.fimTudo, st.cfg.prova))} dias de folga antes da prova.</p>` : ''}
+      <h2>Seu caminho</h2>
+      <div class="barra"><i style="width:${Math.max(1, pctTotal)}%"></i></div>
+      <p class="small muted" style="margin:6px 0 10px">${pctTotal}% das questões feitas${sequencia() > 1 ? ` · 🔥 ${sequencia()} dias seguidos` : ''}</p>
+      <p style="margin:0">${p.retaFinal ? 'Fase de revisão: agora o foco é só o caderno de erros. Você chegou lá!'
+        : pt.real && pt.fimNovas && pt.fimNovas <= p.fimNovas
+          ? `No seu ritmo, você termina as questões novas em <b>${mesAno(pt.fimNovas)}</b>, antes do que planejou. 💪`
+          : `Seguindo as metas do dia, você termina as questões novas em <b>${mesAno(p.fimNovas)}</b>${st.cfg.folgaFinal ? ' e ainda sobra tempo só para revisar antes da prova' : ', a tempo da prova'}.`}</p>
     </section>
 
     <section class="card">
@@ -692,7 +688,7 @@ function semanaHTML(p = plano()) {
     </div>`;
   }
   out += '</div>';
-  out += `<p class="small muted" style="margin:10px 0 0">Até hoje: <b>${sNovas}</b> novas${sMeta ? ` de ${sMeta} previstas na semana` : ''} · ${sTot} questões no total${sTot ? ` · ${pct(sOk, sTot)}% de acerto` : ''}. Os números grandes são as questões feitas (nos dias que vêm, a meta).</p>`;
+  if (sMeta) out += `<p class="small muted" style="margin:10px 0 0">Na semana: <b>${sNovas}</b> de ${sMeta} questões novas.</p>`;
   return out;
 }
 function iniciar(tam, tipo, tema) {

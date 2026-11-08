@@ -317,3 +317,4 @@ input[type=number] { padding: 8px 10px; border-radius: 10px; border: 1px solid v
 .barrinha { display: inline-block; width: 40px; height: 6px; border-radius: 99px; background: var(--line); vertical-align: middle; overflow: hidden; }
 .barrinha > i { display: block; height: 100%; background: var(--azul); }
 @media (max-width: 420px) { .tabela-dias { font-size: 13px; } .barrinha { width: 22px; } }
+#btn-ant { font-size: 20px; padding: 0 12px; }

@@ -29,6 +29,10 @@ Estratégia: **fazer todas as questões do ENEM (provas azuis 2010–2025) uma v
 - **"Não sei — ver resolução"**: antes de responder, dá para pedir a resolução direto (resposta, explicação e vídeo). Conta como erro: a questão vai para a caixa 1 e volta amanhã para você tentar sozinho.
 - Se uma questão “dominada” for refeita e errada, ela volta para a caixa 1.
 
+## Voltar para a questão anterior
+
+- Nos blocos, o botão **←** (ou a tecla ←) volta para a questão anterior só para rever: a alternativa marcada, a certa, a explicação e os rabiscos. A resposta fica travada (🔒 Respondida) e não conta de novo. **→** ou "Próxima" seguem em frente.
+
 ## 3. O que acontece quando você erra
 
 1. A alternativa certa aparece na hora (verde) e a sua fica riscada (vermelho).

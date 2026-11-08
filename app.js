@@ -1672,10 +1672,69 @@ async function listarModelos(ia, chave) {
 }
 function modeloPadrao(ia, lista) {
   const pref = ia === 'google'
-    ? [/^gemini-[\d.]+-flash$/, /^gemini-flash-latest$/, /flash$/, /flash/]
+    ? [/^gemini-flash-latest$/, /^gemini-[\d.]+-flash$/, /flash$/, /flash/]
     : [/^gpt-[\d.]+-mini$/, /^gpt-4o-mini$/, /^gpt-[\d.]+$/, /^gpt-/];
   for (const re of pref) { const m = lista.find(x => re.test(x)); if (m) return m; }
   return lista[0];
+}
+// Um pedido ao Gemini em streaming. Pede pensamento curto e que o raciocínio venha junto (includeThoughts):
+// assim a conexão não fica muda enquanto o modelo pensa. Se o modelo não aceitar essas opções, repete sem elas.
+const ESPERA_GEMINI = 40;   // segundos sem receber nada até desistir desse modelo
+async function geminiStream(modelo, chave, sistema, pedido, imgs, ctx) {
+  const v = parseFloat((modelo.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1]) || 0;
+  const pensar = v >= 3 ? { thinkingLevel: 'low', includeThoughts: true }
+    : v >= 2.5 ? { thinkingBudget: 1024, includeThoughts: true }
+    : /latest/.test(modelo) ? { includeThoughts: true } : null;
+  const enviar = async comPensar => {
+    const ctrl = new AbortController();
+    const repassa = () => ctrl.abort();
+    ctx.signal.addEventListener('abort', repassa, { once: true });
+    let mudo = false;
+    const espera = setTimeout(() => { mudo = true; ctrl.abort(); }, ESPERA_GEMINI * 1000);
+    let texto = '', motivo = '', recusa = false, pensando = false;
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:streamGenerateContent?alt=sse`, {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chave },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: sistema }] },
+          contents: [{ role: 'user', parts: [...imgs.map(data => ({ inline_data: { mime_type: 'image/webp', data } })), { text: pedido }] }],
+          generationConfig: { maxOutputTokens: 8000, ...(comPensar ? { thinkingConfig: comPensar } : {}) },
+        }),
+      });
+      if (!r.ok) throw await erroHTTP(r);
+      ctx.etapa(`O Gemini (${modelo}) está pensando`);
+      await lerSSE(r, j => {
+        clearTimeout(espera);   // chegou alguma coisa: o modelo está vivo
+        if (j.error) { const e = new Error(j.error.message || 'erro no meio da resposta'); e.status = j.error.code; throw e; }
+        if (j.promptFeedback?.blockReason) { recusa = true; motivo = j.promptFeedback.blockReason; }
+        const c0 = j.candidates?.[0];
+        if (!c0) return;
+        if (c0.finishReason) motivo = c0.finishReason;
+        const partes = c0.content?.parts || [];
+        if (!pensando && !texto && partes.some(p => p.thought)) { pensando = true; ctx.etapa(`O Gemini (${modelo}) está raciocinando`); }
+        const novo = partes.filter(p => p.text && !p.thought).map(p => p.text).join('');
+        if (novo) { texto += novo; ctx.texto(texto); }
+      });
+    } catch (err) {
+      if (mudo && !ctx.signal.aborted) { const e = new Error(`${modelo} não mandou nada em ${ESPERA_GEMINI} s`); e.semResposta = true; throw e; }
+      throw err;
+    } finally {
+      clearTimeout(espera);
+      ctx.signal.removeEventListener('abort', repassa);
+    }
+    if (!texto && ['SAFETY', 'RECITATION', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'OTHER'].includes(motivo)) recusa = true;
+    if (!texto && !recusa && motivo === 'MAX_TOKENS') throw new Error(`o ${modelo} gastou o limite pensando e não escreveu nada`);
+    return { texto, motivo, recusa };
+  };
+  try {
+    return await enviar(pensar);
+  } catch (err) {
+    // modelo que não aceita as opções de pensamento: repete sem elas
+    if (pensar && err.status === 400 && /think/i.test(err.message)) return await enviar(null);
+    throw err;
+  }
 }
 // lê uma resposta em streaming (Server-Sent Events): chama onDados com cada "data: {...}"
 async function lerSSE(r, onDados) {
@@ -1744,29 +1803,30 @@ async function chamarIA(ia, sistema, pedido, imgs, ctx) {
   ctx.etapa(`Enviando para ${x.nome.split(' ')[0]}`);
   let texto = '', motivo = '', recusa = false;
   if (ia === 'google') {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:streamGenerateContent?alt=sse`, {
-      method: 'POST',
-      signal: ctx.signal,
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chave },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: sistema }] },
-        contents: [{ role: 'user', parts: [...imgs.map(data => ({ inline_data: { mime_type: 'image/webp', data } })), { text: pedido }] }],
-        generationConfig: { maxOutputTokens: 8000 },
-      }),
-    });
-    if (!r.ok) throw await erroHTTP(r);
-    ctx.etapa('O Gemini está pensando');
-    await lerSSE(r, j => {
-      if (j.error) { const e = new Error(j.error.message || 'erro no meio da resposta'); e.status = j.error.code; throw e; }
-      if (j.promptFeedback?.blockReason) { recusa = true; motivo = j.promptFeedback.blockReason; }
-      const c0 = j.candidates?.[0];
-      if (!c0) return;
-      if (c0.finishReason) motivo = c0.finishReason;
-      const novo = (c0.content?.parts || []).filter(p => p.text && !p.thought).map(p => p.text).join('');
-      if (novo) { texto += novo; ctx.texto(texto); }
-    });
-    if (!texto && ['SAFETY', 'RECITATION', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'OTHER'].includes(motivo)) recusa = true;
-    if (!texto && motivo === 'MAX_TOKENS') throw new Error('o modelo gastou o limite pensando e não escreveu nada — escolha um modelo "flash" em Ajustes');
+    // tenta o modelo escolhido; se ele não mandar nada em ESPERA_GEMINI s (ou estiver fora/sobrecarregado),
+    // tenta outros "flash" estáveis — no máximo 3 modelos
+    const tentar = [modelo];
+    let lista = null;
+    for (let k = 0; ; k++) {
+      const m = tentar[k];
+      try {
+        ({ texto, motivo, recusa } = await geminiStream(m, chave, sistema, pedido, imgs, ctx));
+        if (m !== modelo) {
+          st.cfg.modeloGoogle = m; salvar();
+          ctx.nota(`O ${modelo} não respondeu, então usei o ${m} e deixei ele como padrão (dá para trocar em Ajustes).`);
+        }
+        break;
+      } catch (err) {
+        const trocavel = err.semResposta || err.status >= 500 || err.status === 429 || err.status === 404;
+        if (ctx.signal.aborted || !trocavel) throw err;
+        if (!lista) {
+          try { lista = await listarModelos('google', chave); } catch { lista = []; }
+          for (const r of ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash']) if (lista.includes(r) && !tentar.includes(r)) tentar.push(r);
+        }
+        if (k + 1 >= Math.min(tentar.length, 3)) throw err;
+        ctx.etapa(`${m} não respondeu; tentando ${tentar[k + 1]}`);
+      }
+    }
   } else {
     const raciocina = /^(gpt-5|o\d)/.test(modelo);
     const r = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1812,7 +1872,7 @@ async function imagemBase64(src) {
 }
 
 // Mostra o andamento (etapa + segundos + Cancelar), o texto chegando e, se der errado, o que aconteceu.
-const LIMITE_IA = 120;   // segundos
+const LIMITE_IA = 150;   // segundos (dá tempo de trocar de modelo se o primeiro não responder)
 const SISTEMA_IA = 'Você é um professor experiente de cursinho pré-ENEM. Responde em português do Brasil, de forma curta, clara e correta. Confie no gabarito oficial informado.';
 const pedidosIA = new Map();   // chave da explicação -> AbortController
 async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo }) {
@@ -1820,7 +1880,7 @@ async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo }
   const nome = IAS[ia].nome;
   const ctrl = new AbortController();
   const t0 = Date.now();
-  let etapa = 'Preparando a imagem da questão', texto = '', motivoAbort = '';
+  let etapa = 'Preparando a imagem da questão', texto = '', motivoAbort = '', nota = '';
   el.innerHTML = `<div class="ia-andamento"><span class="ia-etapa"></span> <button class="btn mini" type="button">Cancelar</button></div><div class="ia-texto"></div>`;
   const elEtapa = el.querySelector('.ia-etapa'), elTexto = el.querySelector('.ia-texto');
   const seg = () => Math.round((Date.now() - t0) / 1000);
@@ -1835,13 +1895,14 @@ async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo }
     signal: ctrl.signal,
     etapa: t => { etapa = t; pinta(); },
     texto: t => { texto = t; etapa = 'Escrevendo'; pinta(); if (elTexto.isConnected) elTexto.innerHTML = `<p>${md(t)}</p>`; },
+    nota: t => { nota = t; },
   };
   try {
     const imgs = await imgsDe();
     const final = await chamarIA(ia, sistema, pedido, imgs, ctx);
     clearInterval(relogio);
     if (final === null) { el.innerHTML = `<p class="aviso">${esc(nome)} preferiu não responder essa questão. Tente o vídeo do YouTube ou outra IA em Ajustes.</p>`; return null; }
-    el.innerHTML = `<p>${md(final)}</p>`;
+    el.innerHTML = `<p>${md(final)}</p>` + (nota ? `<p class="small muted" style="margin:0">${esc(nota)}</p>` : '');
     aoTerminar?.(final);
     return final;
   } catch (err) {

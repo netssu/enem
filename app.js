@@ -129,6 +129,14 @@ function filaNovas() {
 }
 
 // ---------------------------------------------------------------- cronograma
+// Ritmo de cada dia da semana: peso 0 = folga, 1 = dia normal. A meta de um dia é proporcional ao peso dele.
+const NIVEIS = [[0, 'Folga'], [0.5, 'Leve'], [1, 'Normal'], [1.5, 'Puxado'], [2, 'Forte']];
+function nomeNivel(p) { return (NIVEIS.find(n => n[0] === p) || [0, `${p}×`])[1]; }
+function pesos() {
+  const p = st.cfg.pesos;
+  if (Array.isArray(p) && p.length === 7) return p;
+  return [0, 1, 2, 3, 4, 5, 6].map(k => (st.cfg.dias.includes(k) ? 1 : 0));
+}
 function plano() {
   const h = hoje();
   const pool = POOL();
@@ -136,11 +144,23 @@ function plano() {
   const restantes = pool.length - feitas;
   const fimNovas = somaDias(st.cfg.prova, -st.cfg.folgaFinal);
   const novasHoje = st.log[h]?.n || 0;
+  const P = pesos();
+  const somaPesos = de => { let s = 0; for (let d = de; d <= fimNovas; d = somaDias(d, 1)) s += P[diaSemana(d)]; return s; };
   let diasEstudo = 0;
-  for (let d = h; d <= fimNovas; d = somaDias(d, 1)) if (st.cfg.dias.includes(diaSemana(d))) diasEstudo++;
-  const hojeEstuda = st.cfg.dias.includes(diaSemana(h));
+  for (let d = h; d <= fimNovas; d = somaDias(d, 1)) if (P[diaSemana(d)] > 0) diasEstudo++;
+  const pesoHoje = P[diaSemana(h)];
+  const hojeEstuda = pesoHoje > 0;
   // meta calculada como se o dia estivesse começando agora (não muda conforme você avança no dia)
-  const meta = diasEstudo > 0 ? Math.ceil((restantes + novasHoje) / diasEstudo) : restantes + novasHoje;
+  const sp = somaPesos(h);
+  const unidade = sp > 0 ? (restantes + novasHoje) / sp : restantes + novasHoje;   // novas num dia "normal"
+  const meta = Math.ceil(unidade * (pesoHoje || 1));
+  // meta de um dia futuro, se hoje você fizer `extra` novas além das que já fez
+  const amanha = somaDias(h, 1);
+  const spAmanha = somaPesos(amanha);
+  const metaFutura = (d, extra = 0) => (d > fimNovas || !P[diaSemana(d)] || spAmanha <= 0 ? 0
+    : Math.ceil(Math.max(0, restantes - Math.max(0, meta - novasHoje) * (hojeEstuda ? 1 : 0) - extra) / spAmanha * P[diaSemana(d)]));
+  let proxEstudo = null;
+  for (let k = 1; k <= 7; k++) { const d = somaDias(h, k); if (P[diaSemana(d)] > 0 && d <= fimNovas) { proxEstudo = d; break; } }
   let n14 = 0;
   let ativos = 0;
   for (let k = 0; k < 14; k++) {
@@ -154,12 +174,52 @@ function plano() {
   return {
     total: pool.length, feitas, restantes, fimNovas, diasEstudo, hojeEstuda,
     meta: hojeEstuda && !retaFinal ? meta : 0,
-    ritmoMeta: retaFinal ? 0 : meta,
-    novasHoje, ritmo, previsao, retaFinal,
+    ritmoMeta: retaFinal ? 0 : Math.ceil(unidade), unidade: retaFinal ? 0 : unidade,
+    novasHoje, ritmo, previsao, retaFinal, pesos: P, metaFutura, proxEstudo,
     diasProva: diffDias(h, st.cfg.prova),
     vencidas: vencidas().length,
   };
 }
+
+// Quando você termina, contando que os erros voltam para revisão.
+// Cada erro precisa de 4 acertos seguidos nas revisões (caixas 1→4) para sair do caderno. Com taxa de
+// acerto s nas revisões, o número esperado de tentativas até 4 acertos seguidos é (1 − s⁴) ÷ ((1 − s)·s⁴).
+function previsaoTermino(p = plano()) {
+  const h = hoje();
+  let n = 0, ok = 0, rn = 0, rok = 0, emRev = 0;
+  for (const q of POOL()) {
+    const r = reg(q.id);
+    if (!r?.h?.length) continue;
+    n++; if (r.h[0][2] === 1 && !r.h[0][4]) ok++;
+    for (const t of r.h.slice(1)) { rn++; if (t[2] === 1 && !t[4]) rok++; }
+    if (r.s === 'rev') emRev++;
+  }
+  const temAcerto = n >= 10;
+  const acerto = temAcerto ? ok / n : 0.6;
+  const s = Math.min(0.95, Math.max(0.5, rn >= 10 ? rok / rn : 0.75));
+  const tentativas = (1 - s ** 4) / ((1 - s) * s ** 4);
+  const errosPrevistos = Math.round(p.restantes * (1 - acerto));
+  const revisoes = Math.round(errosPrevistos * tentativas + emRev * tentativas * 0.6);
+  // ritmo total (novas + revisões) dos últimos 14 dias corridos
+  let tot = 0, novas = 0, ativos = 0;
+  for (let k = 0; k < 14; k++) {
+    const lg = st.log[somaDias(h, -k)];
+    if (!lg) continue;
+    tot += lg.n + lg.r; novas += lg.n;
+    if (lg.n + lg.r) ativos++;
+  }
+  const real = ativos >= 3;
+  // sem histórico, usa o plano: a meta de um dia normal × peso médio por dia corrido
+  const pesoDia = p.pesos.reduce((a, b) => a + b, 0) / 7;
+  const ritmoNovas = real ? novas / 14 : p.ritmoMeta * pesoDia;
+  const ritmoTotal = real ? tot / 14 : ritmoNovas * (1 + (1 - acerto) * tentativas);
+  const fimNovas = ritmoNovas > 0 ? somaDias(h, Math.ceil(p.restantes / ritmoNovas)) : null;
+  let fimTudo = ritmoTotal > 0 ? somaDias(h, Math.ceil((p.restantes + revisoes) / ritmoTotal)) : null;
+  // um erro feito no último dia ainda precisa de 1 + 3 + 7 + 21 dias de revisões
+  if (fimTudo && fimNovas && fimTudo < somaDias(fimNovas, 32)) fimTudo = somaDias(fimNovas, 32);
+  return { acerto, temAcerto, s, tentativas, errosPrevistos, revisoes, ritmoTotal, ritmoNovas, real, fimNovas, fimTudo, emRev };
+}
+function dataCurta(d) { return d ? (d.slice(0, 4) === hoje().slice(0, 4) ? fmtCurto(d) : `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}`) : '—'; }
 
 function sequencia() {
   let d = hoje();
@@ -375,11 +435,12 @@ function linkProva(q) {
 }
 function imgsHTML(q) {
   const esc2 = st.cfg.escala || 1.75;
-  return `<div class="folha">${q.imgs.map((src, k) => `<img src="${src}" alt="Questão ${q.num}${q.imgs.length > 1 ? ` parte ${k + 1}` : ''}" data-w="${(q.w && q.w[k]) || 270}" style="width:${Math.round(((q.w && q.w[k]) || 270) * esc2)}px" ${k ? 'loading="lazy"' : ''}>`).join('')}<canvas class="tinta" aria-hidden="true"></canvas></div>`;
+  return `<div class="folha">${q.imgs.map((src, k) => `<img src="${src}" alt="Questão ${q.num}${q.imgs.length > 1 ? ` parte ${k + 1}` : ''}" data-w="${(q.w && q.w[k]) || 270}" style="width:${Math.round(((q.w && q.w[k]) || 270) * esc2)}px" ${k ? 'loading="lazy"' : ''}>`).join('')}</div><canvas class="tinta" aria-hidden="true"></canvas>`;
 }
 
 // ---------- caneta azul: rabiscar na folha da questão, como na prova de papel
-// Os traços ficam salvos por questão, em coordenadas relativas à largura da folha (acompanham o A−/A+).
+// Dá para rabiscar na questão e na margem em volta. Os traços ficam salvos por questão, em coordenadas
+// relativas à imagem da questão (x, y ÷ largura dela): acompanham o A−/A+ e a largura da tela.
 // Numa tentativa nova (outro dia), a folha começa limpa — o rascunho velho entregaria a resposta.
 const KEY_TINTA = 'enem.tinta';
 const COR_TINTA = '#1f4fc4';
@@ -393,8 +454,12 @@ function salvarTinta() {
 }
 function ligarTinta(id, limpaAntiga) {
   const folha = $app.querySelector('.folha');
-  const cv = folha?.querySelector('canvas.tinta');
-  if (!cv) return;
+  const area = $app.querySelector('.questao-img');
+  const cv = area?.querySelector('canvas.tinta');
+  if (!cv || !folha) return;
+  // posição da imagem dentro da área de desenho: (ox, oy) e largura w
+  let ox = 0, oy = 0, w = 1;
+  const medir = () => { const a = area.getBoundingClientRect(), f = folha.getBoundingClientRect(); ox = f.left - a.left; oy = f.top - a.top; w = f.width || 1; };
   const ctx = cv.getContext('2d');
   const salvo = tinta[id];
   const tracos = salvo && (!limpaAntiga || salvo.d === hoje()) ? salvo.t : [];
@@ -402,18 +467,20 @@ function ligarTinta(id, limpaAntiga) {
   const bDesfazer = $app.querySelector('[data-tinta=desfazer]');
   const bLimpar = $app.querySelector('[data-tinta=limpar]');
   const estilo = w => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = COR_TINTA; ctx.lineWidth = Math.max(1.6, w * 0.0035); };
-  const traco = (t, w) => {
+  const X = x => ox + x * w, Y = y => oy + y * w;
+  const traco = t => {
     ctx.beginPath();
-    t.forEach(([x, y], k) => (k ? ctx.lineTo(x * w, y * w) : ctx.moveTo(x * w, y * w)));
-    if (t.length === 1) ctx.lineTo(t[0][0] * w + 0.5, t[0][1] * w);
+    t.forEach(([x, y], k) => (k ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+    if (t.length === 1) ctx.lineTo(X(t[0][0]) + 0.5, Y(t[0][1]));
     ctx.stroke();
   };
   const desenhar = () => {
-    const w = folha.clientWidth, h = folha.clientHeight, dpr = window.devicePixelRatio || 1;
-    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    medir();
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(area.clientWidth * dpr); cv.height = Math.round(area.clientHeight * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     estilo(w);
-    tracos.forEach(t => traco(t, w));
+    tracos.forEach(traco);
   };
   const botoes = () => {
     $app.classList.toggle('caneta-on', canetaLigada);
@@ -421,29 +488,31 @@ function ligarTinta(id, limpaAntiga) {
     bCaneta?.setAttribute('aria-pressed', canetaLigada);
     if (bDesfazer) bDesfazer.hidden = !tracos.length;
     if (bLimpar) bLimpar.hidden = !tracos.length;
+    area.classList.toggle('tem-tinta', tracos.length > 0);
   };
   const guardar = () => { if (tracos.length) tinta[id] = { d: hoje(), t: tracos }; else delete tinta[id]; salvarTinta(); botoes(); };
   const ro = new ResizeObserver(desenhar);
   ro.observe(folha);
+  ro.observe(area);
   aoSair(() => ro.disconnect());
   let atual = null;
-  const pos = e => { const r = cv.getBoundingClientRect(); return [+((e.clientX - r.left) / r.width).toFixed(4), +((e.clientY - r.top) / r.width).toFixed(4)]; };
+  const pos = e => { const f = folha.getBoundingClientRect(); return [+((e.clientX - f.left) / f.width).toFixed(4), +((e.clientY - f.top) / f.width).toFixed(4)]; };
   cv.addEventListener('pointerdown', e => {
     if (!canetaLigada || (e.pointerType === 'mouse' && e.button !== 0)) return;
     e.preventDefault();
     try { cv.setPointerCapture(e.pointerId); } catch { /* sem captura: segue desenhando */ }
     atual = [pos(e)];
     tracos.push(atual);
-    traco(atual, folha.clientWidth);
+    medir();
+    traco(atual);
   });
   cv.addEventListener('pointermove', e => {
     if (!atual) return;
-    const w = folha.clientWidth;
     const agrupados = e.getCoalescedEvents?.();
     for (const ev of (agrupados && agrupados.length ? agrupados : [e])) {
       const p = pos(ev);
       const u = atual[atual.length - 1];
-      ctx.beginPath(); ctx.moveTo(u[0] * w, u[1] * w); ctx.lineTo(p[0] * w, p[1] * w); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(X(u[0]), Y(u[1])); ctx.lineTo(X(p[0]), Y(p[1])); ctx.stroke();
       atual.push(p);
     }
   });
@@ -486,12 +555,41 @@ function telaInicio() {
   const s = st.sessao;
   const emAndamento = s && s.i < s.itens.length;
   const pctTotal = pct(p.feitas, p.total);
+  const h = hoje();
+  // guarda a meta do dia no histórico (para a semana mostrar meta × feito nos dias que passaram)
+  if (p.meta && st.log[h]?.m === undefined) { (st.log[h] ||= { n: 0, r: 0, ok: 0 }).m = p.meta; salvar(); }
+  const lgHoje = st.log[h] || { n: 0, r: 0, ok: 0 };
+  const feitasHoje = lgHoje.n + lgHoje.r;
   const faltaHoje = Math.max(0, p.meta - p.novasHoje);
+  const recorde = Math.max(0, ...Object.entries(st.log).filter(([d]) => d !== h).map(([, l]) => l.n + l.r));
+  // quanto a meta dos próximos dias cai com mais um bloco hoje
+  const prox = p.proxEstudo;
+  const metaProx = prox ? p.metaFutura(prox) : 0;
+  const metaProxMais = prox ? p.metaFutura(prox, st.cfg.bloco) : 0;
+  const nomeProx = prox ? (prox === somaDias(h, 1) ? 'amanhã' : DIAS_SEMANA[diaSemana(prox)].toLowerCase()) : '';
+  const passar = [];
+  if (prox && metaProxMais < metaProx) passar.push(`Mais um bloco de ${st.cfg.bloco} hoje → a meta de ${nomeProx} cai de <b>${metaProx}</b> para <b>${metaProxMais}</b>.`);
+  else if (p.ritmoMeta > 0 && !p.retaFinal) {
+    const adianta = st.cfg.bloco / p.ritmoMeta;
+    passar.push(`Mais um bloco de ${st.cfg.bloco} hoje adianta <b>${adianta >= 0.95 ? `${Math.round(adianta)} ${Math.round(adianta) === 1 ? 'dia' : 'dias'}` : `${Math.round(adianta * 10) / 10} dia`}</b> de estudo do seu cronograma.`);
+  }
+  if (recorde > 0 && feitasHoje > 0) passar.push(feitasHoje > recorde ? `🏆 <b>Novo recorde!</b> ${feitasHoje} questões num dia (o anterior era ${recorde}).`
+    : `Seu recorde é <b>${recorde}</b> questões num dia — faltam ${recorde - feitasHoje + 1} para bater.`);
   let mensagem;
   if (p.retaFinal) mensagem = `Reta final! Faltam ${p.diasProva} dias para a prova: o foco agora é o <b>caderno de erros</b>.`;
-  else if (!p.hojeEstuda) mensagem = 'Hoje é dia de folga no seu cronograma. Se sobrar um tempinho, um bloco rápido ajuda — mas sem culpa.';
-  else if (faltaHoje === 0 && p.meta > 0) mensagem = `Meta de hoje cumprida (${p.novasHoje} novas). Se quiser adiantar, faça mais um bloco — a meta dos próximos dias diminui sozinha.`;
-  else mensagem = `Meta de hoje: <b>${p.meta} questões novas</b> (${p.novasHoje} feitas)${p.vencidas ? ` + <b>${p.vencidas} revisões</b>` : ''}.`;
+  else if (!p.hojeEstuda) mensagem = feitasHoje
+    ? `Hoje é folga no seu cronograma e você já fez <b>${feitasHoje} ${feitasHoje === 1 ? 'questão' : 'questões'}</b> — tudo isso é lucro e adianta o cronograma.`
+    : 'Hoje é dia de folga no seu cronograma. Se sobrar um tempinho, um bloco rápido ajuda — mas sem culpa.';
+  else if (faltaHoje === 0) mensagem = p.novasHoje > p.meta
+    ? `Meta batida e superada: <b>${p.novasHoje} novas</b> de ${p.meta} (+${p.novasHoje - p.meta}). Dá para ir além!`
+    : `Meta de hoje batida: <b>${p.novasHoje}/${p.meta} novas</b>. Dá para passar do limite!`;
+  else mensagem = `Meta de hoje: <b>${p.meta} questões novas</b> (${p.novasHoje} feitas, faltam ${faltaHoje})${p.vencidas ? ` + <b>${p.vencidas} revisões</b>` : ''}.`;
+  // barra que passa de 100%: a parte além da meta aparece em outra cor
+  const base = Math.max(p.meta, p.novasHoje, 1);
+  const barraHoje = p.retaFinal ? '' : `<div class="barra meta-barra" title="novas hoje">
+      <i style="width:${(100 * Math.min(p.novasHoje, p.meta || 0)) / base}%"></i><i class="alem" style="width:${(100 * Math.max(0, p.novasHoje - (p.meta || 0))) / base}%"></i>
+      ${p.meta ? `<b style="left:${(100 * p.meta) / base}%" title="meta: ${p.meta}"></b>` : ''}</div>`;
+  const pt = previsaoTermino(p);
 
   $app.innerHTML = `
     <h1>${saudacao()}</h1>
@@ -500,7 +598,8 @@ function telaInicio() {
     <section class="card destaque">
       <h2>Estudar agora</h2>
       <p>${mensagem}</p>
-      ${p.meta > 0 && !p.retaFinal ? `<div class="barra" title="novas hoje"><i style="width:${Math.min(100, pct(p.novasHoje, p.meta))}%"></i></div>` : ''}
+      ${p.meta > 0 || p.novasHoje ? barraHoje : ''}
+      ${passar.length && (faltaHoje === 0 || !p.hojeEstuda) && !p.retaFinal ? `<p class="small" style="margin:10px 0 0">${passar.join('<br>')}</p>` : ''}
       <div class="linha-btns">
         ${emAndamento
           ? `<a class="btn primario grande" href="#/estudar">Continuar bloco (${s.i + 1}/${s.itens.length})</a>`
@@ -516,16 +615,23 @@ function telaInicio() {
     ${cardFoco()}
 
     <section class="card">
-      <h2>Seu cronograma</h2>
+      <div class="titulo-linha"><h2>Esta semana</h2><a class="small" href="#/ajustes">Mudar metas</a></div>
+      ${semanaHTML(p)}
+    </section>
+
+    <section class="card">
+      <h2>Quando você termina</h2>
       <div class="grid2">
         <div class="stat"><b>${p.feitas.toLocaleString('pt-BR')}</b><span>de ${p.total.toLocaleString('pt-BR')} questões feitas (${pctTotal}%)</span></div>
-        <div class="stat"><b>${p.retaFinal ? '—' : p.ritmoMeta}</b><span>novas por dia de estudo para terminar até ${fmtCurto(p.fimNovas)}</span></div>
-        <div class="stat"><b>${p.previsao ? (p.previsao.slice(0, 4) === hoje().slice(0, 4) ? fmtCurto(p.previsao) : p.previsao.slice(8, 10) + '/' + p.previsao.slice(5, 7) + '/' + p.previsao.slice(2, 4)) : '—'}</b><span>${p.previsao ? `previsão no seu ritmo atual (${(p.ritmo * 7).toFixed(0)}/semana)` : 'previsão de término aparece depois de 3 dias de estudo'}</span></div>
         <div class="stat"><b>${sequencia()}</b><span>dias seguidos estudando</span></div>
+        <div class="stat"><b>${dataCurta(pt.fimNovas)}</b><span>termina as questões novas ${pt.real ? `no seu ritmo (${Math.round(pt.ritmoNovas * 7)}/semana)` : 'seguindo as metas'}</span></div>
+        <div class="stat"><b>${dataCurta(pt.fimTudo)}</b><span>tudo dominado, contando as revisões dos erros</span></div>
       </div>
-      ${p.previsao && p.previsao > p.fimNovas && !p.retaFinal ? `<p class="aviso" style="margin-top:12px">No ritmo atual você termina as questões novas depois da data-alvo. Tudo bem: a meta diária já foi recalculada — ou ajuste os dias em <a href="#/ajustes">Ajustes</a>.</p>` : ''}
-      <h3 style="margin-top:16px">Esta semana</h3>
-      ${semanaHTML()}
+      <p class="small muted" style="margin:12px 0 0">${pt.temAcerto ? `Você acerta <b>${Math.round(pt.acerto * 100)}%</b> de primeira` : 'Ainda sem histórico: contando com ~60% de acerto de primeira'}, então das ${p.restantes.toLocaleString('pt-BR')} que faltam umas <b>${pt.errosPrevistos.toLocaleString('pt-BR')}</b> devem ir para o caderno de erros.
+        Nas revisões você acerta ${Math.round(pt.s * 100)}%, e cada erro leva em média <b>${pt.tentativas.toFixed(1).replace('.', ',')} revisões</b> até sair (4 acertos seguidos): são ~${pt.revisoes.toLocaleString('pt-BR')} revisões a mais${pt.real ? `, no seu ritmo de ${Math.round(pt.ritmoTotal * 7)} questões por semana` : ''}.
+        ${pt.real ? '' : 'A previsão fica mais certa depois de 3 dias de estudo.'}</p>
+      ${pt.fimTudo && pt.fimTudo > st.cfg.prova && !p.retaFinal ? `<p class="aviso" style="margin-top:12px">Nesse ritmo, o caderno de erros só fica limpo depois da prova (${fmt(st.cfg.prova)}). Acertar mais de primeira e fazer as revisões em dia é o que mais adianta — ou suba a meta de alguns dias em <a href="#/ajustes">Ajustes</a>.</p>`
+        : pt.fimTudo && !p.retaFinal ? `<p class="small" style="margin:8px 0 0">✅ Dá tempo: ${Math.max(0, diffDias(pt.fimTudo, st.cfg.prova))} dias de folga antes da prova.</p>` : ''}
     </section>
 
     <section class="card">
@@ -556,17 +662,37 @@ function saudacao() {
   const h = new Date().getHours();
   return h < 12 ? 'Bom dia!' : h < 18 ? 'Boa tarde!' : 'Boa noite!';
 }
-function semanaHTML() {
+// semana atual: em cada dia, a meta de novas, o que foi feito e o acerto
+function semanaHTML(p = plano()) {
   const h = hoje();
   const dom = somaDias(h, -diaSemana(h));
-  let out = '<div class="semana">';
+  let out = '<div class="semana semana-metas">';
+  let sMeta = 0, sNovas = 0, sTot = 0, sOk = 0;
   for (let k = 0; k < 7; k++) {
     const d = somaDias(dom, k);
     const lg = st.log[d];
-    const folga = !st.cfg.dias.includes(k);
-    out += `<div class="${d === h ? 'hoje' : ''} ${folga ? 'folga' : ''}" title="${fmt(d)}">${DIAS_SEMANA[k]}<b>${lg ? lg.n + lg.r : (d < h ? '·' : '')}</b><span class="small muted">${folga ? 'folga' : ''}</span></div>`;
+    const peso = p.pesos[k];
+    const meta = d < h ? (lg?.m || 0) : d === h ? p.meta : p.metaFutura(d);
+    const novas = lg?.n || 0, tot = lg ? lg.n + lg.r : 0;
+    if (d <= h) { sMeta += meta; sNovas += novas; sTot += tot; sOk += lg?.ok || 0; } else sMeta += meta;
+    let estado = '', cls = '';
+    if (d > h) { estado = meta && peso === 1 ? 'meta' : nomeNivel(peso).toLowerCase(); cls = 'futuro'; }
+    else if (meta && novas >= meta) { estado = novas > meta ? `★ +${novas - meta}` : '✓ meta'; cls = novas > meta ? 'superou' : 'bateu'; }
+    else if (meta) { estado = d < h ? `faltou ${meta - novas}` : `faltam ${meta - novas}`; cls = d < h ? 'faltou' : ''; }
+    else if (tot) { estado = `★ +${tot} extra`; cls = 'superou'; }
+    else estado = peso ? '' : 'folga';
+    const larg = meta ? Math.min(100, pct(novas, meta)) : tot ? 100 : 0;
+    out += `<div class="${d === h ? 'hoje' : ''} ${!peso ? 'folga' : ''} ${cls}" title="${fmt(d)} · ${nomeNivel(peso)}${meta ? ` · meta: ${meta} novas` : ''}${tot ? ` · ${novas} novas + ${tot - novas} revisões · ${pct(lg.ok, tot)}% de acerto` : ''}">
+      <span class="dia">${DIAS_SEMANA[k]}</span>
+      <b>${d > h ? (meta || '–') : tot || (d < h ? '·' : '0')}</b>
+      ${d <= h && (meta || tot) ? `<span class="mini-barra"><i style="width:${larg}%"></i></span>` : ''}
+      <span class="est">${estado}</span>
+      ${tot ? `<span class="ac">${pct(lg.ok, tot)}%</span>` : ''}
+    </div>`;
   }
-  return out + '</div>';
+  out += '</div>';
+  out += `<p class="small muted" style="margin:10px 0 0">Até hoje: <b>${sNovas}</b> novas${sMeta ? ` de ${sMeta} previstas na semana` : ''} · ${sTot} questões no total${sTot ? ` · ${pct(sOk, sTot)}% de acerto` : ''}. Os números grandes são as questões feitas (nos dias que vêm, a meta).</p>`;
+  return out;
 }
 function iniciar(tam, tipo, tema) {
   if (!montarSessao(tam, tipo, tema)) {
@@ -1175,6 +1301,29 @@ function resultadoSimulado() {
   document.getElementById('sim-novo').addEventListener('click', () => { st.simulado = null; salvar(); rota(); });
 }
 
+// desempenho por dia da semana nas últimas 8 semanas
+function porDiaSemanaHTML() {
+  const h = hoje();
+  const P = pesos();
+  const lin = DIAS_SEMANA.map((nome, k) => ({ nome, k, dias: 0, tot: 0, ok: 0, metas: 0, bateu: 0 }));
+  for (let i = 0; i < 56; i++) {
+    const d = somaDias(h, -i);
+    const lg = st.log[d];
+    const x = lin[diaSemana(d)];
+    if (!lg) continue;
+    const t = lg.n + lg.r;
+    if (t) { x.dias++; x.tot += t; x.ok += lg.ok; }
+    if (lg.m) { x.metas++; if (lg.n >= lg.m) x.bateu++; }
+  }
+  const max = Math.max(1, ...lin.map(x => (x.dias ? x.tot / x.dias : 0)));
+  return `<table class="tabela-dias"><tr><th></th><th>Ritmo</th><th>Estudou</th><th>Média/dia</th><th>Acerto</th><th>Metas</th></tr>
+    ${lin.map(x => { const media = x.dias ? Math.round(x.tot / x.dias) : 0; return `<tr class="${x.k === diaSemana(h) ? 'hoje' : ''}">
+      <th>${x.nome}</th><td class="muted">${nomeNivel(P[x.k])}</td><td>${x.dias}/8</td>
+      <td><span class="barrinha"><i style="width:${(100 * media) / max}%"></i></span> ${media || '–'}</td>
+      <td>${x.tot ? pct(x.ok, x.tot) + '%' : '–'}</td><td>${x.metas ? `${x.bateu}/${x.metas}` : '–'}</td></tr>`; }).join('')}
+  </table>`;
+}
+
 // ---------- progresso
 function telaProgresso() {
   const pool = POOL();
@@ -1232,6 +1381,11 @@ function telaProgresso() {
       </table></div>
     </section>
     <section class="card">
+      <h2>Por dia da semana</h2>
+      <p class="small muted">Últimas 8 semanas.</p>
+      ${porDiaSemanaHTML()}
+    </section>
+    <section class="card">
       <h2>Últimas 12 semanas</h2>
       <div class="calor">${calor}</div>
     </section>
@@ -1249,8 +1403,9 @@ function telaAjustes() {
       <input type="date" id="prova" value="${c.prova}">
       <label class="campo" for="folga">Terminar as questões novas quantos dias antes da prova?</label>
       <select id="folga">${[0, 15, 30, 45, 60].map(n => `<option value="${n}" ${c.folgaFinal === n ? 'selected' : ''}>${n ? `${n} dias antes (reta final só de revisão)` : 'Até a véspera'}</option>`).join('')}</select>
-      <label class="campo">Dias que você estuda</label>
-      <div class="dias">${DIAS_SEMANA.map((d, k) => `<label><input type="checkbox" data-dia="${k}" ${c.dias.includes(k) ? 'checked' : ''}> ${d}</label>`).join('')}</div>
+      <label class="campo">Meta de cada dia da semana</label>
+      <p class="small muted" style="margin:0 0 8px">Toque num dia para mudar: Folga → Leve (½) → Normal → Puxado (1½×) → Forte (2×). A meta de cada dia é proporcional.</p>
+      <div class="pesos" id="pesos"></div>
       <label class="campo" for="bloco">Tamanho do bloco</label>
       <select id="bloco">${[5, 10, 15, 20, 30].map(n => `<option value="${n}" ${c.bloco === n ? 'selected' : ''}>${n} questões (~${n * 3} min)</option>`).join('')}</select>
     </section>
@@ -1294,9 +1449,26 @@ function telaAjustes() {
   g('ordem').addEventListener('change', e => { c.ordem = e.target.value; salvar(); });
   g('foco').addEventListener('change', e => { c.foco = e.target.checked; salvar(); });
   g('apikey').addEventListener('change', e => { c.apiKey = e.target.value.trim(); salvar(); });
-  $app.querySelectorAll('[data-dia]').forEach(i => i.addEventListener('change', () => {
-    c.dias = [...$app.querySelectorAll('[data-dia]:checked')].map(x => +x.dataset.dia); salvar();
-  }));
+  const desenharPesos = () => {
+    const P = pesos();
+    const pl = plano();
+    g('pesos').innerHTML = DIAS_SEMANA.map((d, k) => `<button class="peso n${String(P[k]).replace('.', '_')}" data-peso="${k}">
+      <span>${d}</span><b>${P[k] ? Math.ceil(pl.unidade * P[k]) : '–'}</b><small>${nomeNivel(P[k])}</small></button>`).join('');
+    g('pesos').querySelectorAll('[data-peso]').forEach(b => b.addEventListener('click', () => {
+      const k = +b.dataset.peso;
+      const P2 = [...pesos()];
+      const i = NIVEIS.findIndex(n => n[0] === P2[k]);
+      P2[k] = NIVEIS[(i + 1) % NIVEIS.length][0];
+      if (!P2.some(x => x > 0)) P2[k] = 1;   // pelo menos um dia de estudo
+      c.pesos = P2;
+      c.dias = P2.map((x, j) => (x > 0 ? j : -1)).filter(j => j >= 0);
+      // a meta de hoje já registrada vale a nova configuração
+      if (st.log[hoje()]) delete st.log[hoje()].m;
+      salvar();
+      desenharPesos();
+    }));
+  };
+  desenharPesos();
   $app.querySelectorAll('[data-area]').forEach(i => i.addEventListener('change', () => {
     c.areas = [...$app.querySelectorAll('[data-area]:checked')].map(x => x.dataset.area); salvar();
   }));

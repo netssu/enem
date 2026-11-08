@@ -165,7 +165,7 @@ h1, h2, .marca { font-family: "Iowan Old Style", "Palatino Linotype", Georgia, s
   .questao-img img { filter: brightness(.9) sepia(.06); }
 }
 
-main.larga { max-width: 1100px; }
+main.larga { max-width: 1300px; }
 .q-titulo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .q-titulo h2 { margin: 0; }
 .tamanho { display: inline-flex; gap: 4px; flex-shrink: 0; }
@@ -262,8 +262,9 @@ input[type=number] { padding: 8px 10px; border-radius: 10px; border: 1px solid v
 
 /* ---------- caneta azul ---------- */
 .folha { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; }
-.folha canvas.tinta { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.caneta-on .folha canvas.tinta { pointer-events: auto; touch-action: none; cursor: crosshair; }
+.questao-img { position: relative; }
+.questao-img > canvas.tinta { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.caneta-on .questao-img > canvas.tinta { pointer-events: auto; touch-action: none; cursor: crosshair; }
 .caneta-on .questao-img { outline: 2px solid #1f4fc4; outline-offset: -1px; }
 .btn.mini.caneta.on { background: #1f4fc4; border-color: #1f4fc4; color: #fff; }
 .tamanho { flex-wrap: wrap; justify-content: flex-end; }
@@ -271,3 +272,43 @@ input[type=number] { padding: 8px 10px; border-radius: 10px; border: 1px solid v
   .q-titulo { flex-wrap: wrap; }
   .q-titulo .ferramentas, .q-titulo > .tamanho { margin-left: auto; }
 }
+/* margem de rascunho embaixo da questão, quando a caneta está ligada ou já há rabiscos */
+.caneta-on .questao-img, .questao-img.tem-tinta { padding-bottom: 180px; }
+.caneta-on .questao-img::after { content: 'rascunho'; position: absolute; left: 14px; bottom: 8px; font-size: 12px; color: #8a8478; pointer-events: none; }
+
+/* ---------- metas da semana ---------- */
+.titulo-linha { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.meta-barra { position: relative; display: flex; overflow: visible; }
+.meta-barra > i { border-radius: 0; }
+.meta-barra > i:first-child { border-radius: 99px 0 0 99px; }
+.meta-barra > i.alem { background: var(--aviso); border-radius: 0 99px 99px 0; }
+.meta-barra > b { position: absolute; top: -4px; width: 3px; height: 18px; margin-left: -1px; background: var(--text); border-radius: 2px; }
+.semana-metas div { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px 6px; }
+.semana-metas .dia { font-size: 12px; color: var(--muted); }
+.semana-metas b { font-size: 18px; line-height: 1.2; }
+.semana-metas .futuro b { color: var(--muted); font-weight: 600; }
+.semana-metas .est { font-size: 11px; line-height: 1.2; color: var(--muted); white-space: nowrap; }
+.semana-metas .ac { font-size: 11px; color: var(--muted); }
+.semana-metas .bateu .est { color: var(--ok); font-weight: 600; }
+.semana-metas .superou .est { color: var(--aviso); font-weight: 700; }
+.semana-metas .faltou .est { color: var(--erro); }
+.semana-metas .superou { background: var(--aviso-bg); }
+.mini-barra { width: 80%; height: 4px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.mini-barra > i { display: block; height: 100%; background: var(--ok); }
+.superou .mini-barra > i { background: var(--aviso); }
+.pesos { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.peso { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 2px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+.peso span { font-size: 12px; color: var(--muted); }
+.peso b { font-size: 18px; }
+.peso small { font-size: 11px; color: var(--muted); }
+.peso.n0 { opacity: .55; }
+.peso.n1_5, .peso.n2 { border-color: var(--azul); }
+.peso.n2 { background: var(--azul-claro); }
+@media (max-width: 420px) { .semana-metas .est { font-size: 10px; white-space: normal; text-align: center; } }
+.tabela-dias { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.tabela-dias th, .tabela-dias td { padding: 6px 4px; text-align: left; border-bottom: 1px solid var(--line); }
+.tabela-dias tr:first-child th { font-size: 12px; color: var(--muted); font-weight: 600; }
+.tabela-dias tr.hoje th { color: var(--azul); }
+.barrinha { display: inline-block; width: 40px; height: 6px; border-radius: 99px; background: var(--line); vertical-align: middle; overflow: hidden; }
+.barrinha > i { display: block; height: 100%; background: var(--azul); }
+@media (max-width: 420px) { .tabela-dias { font-size: 13px; } .barrinha { width: 22px; } }

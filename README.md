@@ -6,7 +6,7 @@ App de estudo com uma estratégia simples: **fazer todas as questões das provas
 
 - ~2.900 questões recortadas das provas oficiais, com gabarito.
 - Errou (ou chutou, ou clicou em "não sei") → caderno de erros, com revisões em 1, 3, 7 e 21 dias.
-- Botão de resolução no YouTube e explicação curta com IA (opcional, com sua chave da API da Anthropic).
+- Botão de resolução no YouTube e explicação curta com IA (opcional, com a sua chave de API do Claude, do Gemini ou do ChatGPT).
 - Meta diária calculada a partir da data da prova; o progresso fica salvo no navegador (com backup em JSON).
 
 A lógica completa está em [LOGICA.md](LOGICA.md).

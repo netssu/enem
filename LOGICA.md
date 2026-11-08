@@ -32,7 +32,7 @@ Estratégia: **fazer todas as questões do ENEM (provas azuis 2010–2025) uma v
 ## 3. O que acontece quando você erra
 
 1. A alternativa certa aparece na hora (verde) e a sua fica riscada (vermelho).
-2. **💡 Por que é X?** — resumo curto (≤130 palavras): por que a certa está certa, por que a sua estava errada e o **conceito-chave** para revisar. Gerado pelo Claude a partir da imagem da questão; fica salvo, então cada questão só é paga uma vez.
+2. **💡 Por que é X?** — resumo curto (≤130 palavras): por que a certa está certa, por que a sua estava errada e o **conceito-chave** para revisar. Gerado a partir da imagem da questão pela IA escolhida em Ajustes (Claude, Gemini ou ChatGPT, com a sua chave de API); fica salvo, então cada questão só é gerada uma vez.
 3. **▶ Resolução no YouTube** — abre a busca “ENEM {ano} questão {n} resolução”. Se achar um vídeo bom, cole o link e o botão passa a abrir direto nele.
 4. **Por que errei?** — Não sabia o conteúdo / Interpretação / Desatenção / Conta / Chutei / Faltou tempo + uma anotação livre. O caderno de erros mostra quais motivos mais aparecem.
 

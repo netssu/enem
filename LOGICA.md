@@ -87,7 +87,7 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 - A conta usa o **acerto de primeira** (1ª tentativa, sem chute e sem ter pedido ajuda), por tema e por matéria.
 - Para não exagerar com poucas questões, a taxa é puxada para a sua média geral: `(acertos + 4 × média) ÷ (feitas + 4)`. Errar 1 de 1 não vira “0%”.
 - Um tema entra na lista de fracos com pelo menos 3 questões feitas e nota abaixo da média. Uma matéria inteira entra quando está abaixo da média mas nenhum tema dela tem questões suficientes para aparecer sozinho.
-- A análise começa com 15 questões feitas. Fica em **Progresso › Pontos fracos**; o mais fraco aparece também na tela inicial.
+- A análise começa com 15 questões feitas. Fica na aba **Erros** (os 3 piores temas, com “Treinar”) e na análise completa.
 
 ### O que muda por causa disso
 

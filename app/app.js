@@ -646,16 +646,17 @@ function telaInicio() {
   ligarTreinar();
 }
 function cardFoco() {
+  return st.simulado && !st.simulado.fim ? '<section class="card"><p class="aviso" style="margin:0">Você tem um <a href="#/simulado">simulado em andamento</a> — o relógio continua correndo.</p></section>' : '';
+}
+// pontos fracos no caderno de erros: os 3 piores temas, com botão de treinar
+function cardPontosErros() {
   const an = analisePontos();
   if (!an.temOsTemas) return '';
-  const sim = st.simulado && !st.simulado.fim ? '<p class="aviso">Você tem um <a href="#/simulado">simulado em andamento</a> — o relógio continua correndo.</p>' : '';
-  if (!an.pronto) return sim ? `<section class="card">${sim}</section>` : '';
-  const f = an.fracos[0];
+  if (!an.pronto) return `<section class="card"><h2>🎯 Pontos fracos</h2><p class="small muted" style="margin:0">Aparecem depois de ${MIN_ANALISE} questões feitas (faltam ${MIN_ANALISE - an.n}).</p></section>`;
   return `<section class="card">
-    ${sim}
-    <h2>Seu ponto mais fraco</h2>
-    ${f ? `<ul class="lista">${linhaTema(f, an.media)}</ul>` : '<p class="muted">Nenhum tema claramente abaixo da sua média por enquanto.</p>'}
-    <a href="#/pontos">Ver todos os pontos fracos →</a>
+    <div class="titulo-linha"><h2>🎯 Onde você mais erra</h2><span class="small muted">média ${Math.round(an.media * 100)}%</span></div>
+    ${an.fracos.length ? `<ul class="lista">${an.fracos.slice(0, 3).map(x => linhaTema(x, an.media)).join('')}</ul>` : '<p class="muted">Nenhum tema claramente abaixo da sua média por enquanto.</p>'}
+    <a href="#/pontos">Ver a análise completa →</a>
   </section>`;
 }
 function saudacao() {
@@ -987,11 +988,13 @@ function telaErros() {
       <div class="linha-btns"><button class="btn" data-acao="rapido">⚡ Só 5 rapidinhas</button></div>
       <p class="small muted" style="margin-bottom:0">Acertou → volta em 3, 7 e 21 dias. Acertou 4 vezes seguidas → sai do caderno.</p>` : ''}
     </section>
+    ${cardPontosErros()}
     <section class="card">
       <h2>Próximos dias</h2>
       ${semana}
     </section>
   `;
+  ligarTreinar();
   $app.querySelector('[data-acao=bloco]')?.addEventListener('click', () => iniciar(tam, 'rev'));
   $app.querySelector('[data-acao=rapido]')?.addEventListener('click', () => iniciar(5, 'rev'));
 }
@@ -1055,7 +1058,7 @@ function telaPontos() {
       </section>` : ''}
       <section class="card"><h2>Todas as matérias</h2><p class="small muted">Toque numa matéria para ver os temas.</p>${porArea}</section>`;
   }
-  $app.innerHTML = `<h1>Pontos fracos</h1><p class="muted">${an.n} questões feitas · ${Math.round(an.media * 100)}% de acerto de primeira</p>${corpo}`;
+  $app.innerHTML = `<p><a href="#/erros">← Caderno de erros</a></p><h1>Pontos fracos</h1><p class="muted">${an.n} questões feitas · ${Math.round(an.media * 100)}% de acerto de primeira</p>${corpo}`;
   ligarTreinar();
 }
 
@@ -1356,7 +1359,6 @@ function telaProgresso() {
   const totOk = porArea.reduce((s, x) => s + x.primeira, 0);
   $app.innerHTML = `
     <h1>Progresso</h1>
-    <a class="btn grande" href="#/pontos" style="margin-top:8px">🎯 Ver meus pontos fracos</a>
     <section class="card">
       <div class="grid2">
         <div class="stat"><b>${tot}</b><span>questões feitas de ${pool.length}</span></div>
@@ -1422,7 +1424,7 @@ function telaAjustes() {
       <div class="dias">${ORDEM_AREAS.map(a => `<label><input type="checkbox" data-area="${a}" ${c.areas.includes(a) ? 'checked' : ''}> ${AREAS[a]}</label>`).join('')}</div>
       <p class="small muted">Desmarcar uma área só muda o que aparece nos blocos; o cronograma continua contando todas.</p>
       <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="foco" ${c.foco ? 'checked' : ''}> 🎯 Reforçar pontos fracos</label></div>
-      <p class="small muted">Ligado: cerca de 1 em cada 3 questões novas dos blocos vem dos seus 3 temas mais fracos (veja em Progresso › Pontos fracos).</p>
+      <p class="small muted">Ligado: cerca de 1 em cada 3 questões novas dos blocos vem dos seus 3 temas mais fracos (veja em Erros › Onde você mais erra).</p>
     </section>
     <section class="card">
       <h2>Explicações com IA (opcional)</h2>
@@ -1642,7 +1644,7 @@ function rota() {
   const emProva = pagina === 'simulado' && st.simulado && !st.simulado.fim;
   $app.classList.toggle('larga', pagina === 'estudar' || pagina === 'ver' || emProva);
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('ativo',
-    a.dataset.nav === ({ pontos: 'progresso' }[pagina] || pagina || 'inicio')));
+    a.dataset.nav === ({ pontos: 'erros' }[pagina] || pagina || 'inicio')));
   if (pagina === 'estudar') telaEstudar();
   else if (pagina === 'simulado') telaSimulado();
   else if (pagina === 'pontos') telaPontos();

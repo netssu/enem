@@ -37,6 +37,12 @@ Estratégia: **fazer todas as questões do ENEM (provas azuis 2010–2025) uma v
 - Se der errado, a caixa mostra o motivo em português (chave recusada, limite de uso, modelo inexistente, servidor fora, sem conexão) e os **detalhes**: IA, modelo, onde parou, código HTTP, mensagem da API e navegador — nunca a chave. **Copiar detalhes** copia esse texto; **Tentar de novo** repete.
 - Em **Ajustes › Testar a IA** dá para conferir a chave com um pedido curto, sem gastar uma explicação.
 
+## Bloco de questões × correção de erros
+
+- São dois andamentos separados: o **bloco de questões** (começado no Início: novas + revisões do dia) e a **correção** (começada em Erros, em "Só revisões" ou em "Treinar" um tema). Começar um guarda o outro onde parou.
+- No Início, **Continuar bloco** volta sempre para o bloco de questões; se houver correção no meio, aparece também **↺ Continuar correção**. Na aba Erros, **Continuar correção** aparece no topo.
+- "Sair" leva de volta para onde o bloco começou (Início ou Erros). No fim de um, o app oferece continuar o outro.
+
 ## Voltar para a questão anterior
 
 - Nos blocos, o botão **←** (ou a tecla ←) volta para a questão anterior só para rever: a alternativa marcada, a certa, a explicação e os rabiscos. A resposta fica travada (🔒 Respondida) e não conta de novo. **→** ou "Próxima" seguem em frente.

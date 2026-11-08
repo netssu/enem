@@ -762,11 +762,13 @@ function telaEstudar() {
     ? `<span class="chip tag-rev">↺ Revisão · caixa ${r?.caixa || 1}</span>`
     : item.tipo === 'pratica' ? '<span class="chip">Prática</span>'
     : item.foco ? '<span class="chip tag-foco" title="Questão de um dos seus temas mais fracos">🎯 Reforço</span>' : '<span class="chip">Nova</span>';
+  // voltar para a questão anterior do bloco: só para rever — a resposta já registrada não muda
+  const anterior = !s.avulsa && s.i > 0 ? '<button class="btn fantasma" id="btn-ant" title="Rever a questão anterior (a resposta não muda) · tecla ←" aria-label="Questão anterior">←</button>' : '';
 
   $app.innerHTML = `
     <div class="q-prog"><i style="width:${pct(s.i, s.itens.length)}%"></i></div>
     <div class="q-topo">
-      <div class="info">${chipArea(q.area)} ${rotulo}</div>
+      <div class="info">${chipArea(q.area)} ${rotulo}${res ? ' <span class="chip" title="Você já respondeu: dá para rever, não para mudar">🔒 Respondida</span>' : ''}</div>
       <div class="info"><span class="timer" id="timer">0:00</span>
         <span class="small muted">${s.avulsa ? '' : `${s.i + 1}/${s.itens.length}`}</span>
         <a class="btn mini" href="#/" title="Sair (o bloco fica salvo)">Sair</a></div>
@@ -780,6 +782,7 @@ function telaEstudar() {
       <div class="alts" role="radiogroup" aria-label="Alternativas">${'ABCDE'.split('').map(l => `<button class="alt" role="radio" aria-checked="false" data-l="${l}">${l}</button>`).join('')}</div>
       <div class="acoes" id="acoes">
         <span class="secundarias">
+          ${anterior}
           <button class="btn fantasma" data-acao="pular" title="Pular (ela volta outro dia)">Pular</button>
           <button class="btn fantasma" id="btn-dica">💡 Ver como fazer</button>
         </span>
@@ -807,6 +810,8 @@ function telaEstudar() {
     mostrarFeedback();
   };
   const proxima = () => { s.i++; salvar(); window.scrollTo(0, 0); rota(); };
+  const voltar = () => { if (s.avulsa || s.i <= 0) return; s.i--; salvar(); window.scrollTo(0, 0); rota(); };
+  document.getElementById('acoes').addEventListener('click', e => { if (e.target.closest('#btn-ant')) voltar(); });
 
   function mostrarFeedback() {
     const rr = s.res[s.i];
@@ -861,7 +866,7 @@ function telaEstudar() {
         <textarea id="nota" placeholder="Ex.: confundi mitose com meiose; lembrar que…">${esc(reg2.nota || '')}</textarea>
       </section>` : ''}
     `;
-    document.getElementById('acoes').innerHTML = `<button class="btn primario" id="btn-prox">${s.i + 1 < s.itens.length ? 'Próxima →' : 'Concluir'}</button>`;
+    document.getElementById('acoes').innerHTML = `${anterior}<button class="btn primario" id="btn-prox">${s.i + 1 < s.itens.length ? 'Próxima →' : 'Concluir'}</button>`;
     document.getElementById('dica').innerHTML = '';
     document.getElementById('btn-prox').addEventListener('click', proxima);
     document.getElementById('chute')?.addEventListener('change', e => { marcarChute(q.id, e.target.checked); mostrarFeedback(); });
@@ -933,12 +938,16 @@ function telaEstudar() {
       b?.click();
     } else if (e.key === 'Enter') {
       document.getElementById('btn-prox')?.click() || document.getElementById('btn-conf')?.click();
+    } else if (e.key === 'ArrowLeft') {
+      voltar();
+    } else if (e.key === 'ArrowRight') {
+      document.getElementById('btn-prox')?.click();
     }
   };
   document.addEventListener('keydown', teclas);
   aoSair(() => document.removeEventListener('keydown', teclas));
 
-  if (res) mostrarFeedback();
+  if (res) { clearInterval(timer); mostrarFeedback(); }
 }
 
 function telaFimSessao() {

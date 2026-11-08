@@ -11,6 +11,13 @@ App de estudo com uma estratégia simples: **fazer todas as questões das provas
 
 A lógica completa está em [LOGICA.md](LOGICA.md).
 
+## Como usar
+
+1. Abra o site e vá em **Ajustes**: data do ENEM, dias em que você estuda e língua estrangeira.
+2. Na tela **Hoje**, faça um bloco de questões (padrão: 10, ~30 min).
+3. Errou ou não sabia? A questão volta sozinha no caderno de erros em 1, 3, 7 e 21 dias.
+4. Use **Exportar / Importar progresso** para levar seu progresso entre o celular e o computador.
+
 ## Rodar localmente
 
 Dê dois cliques em `INICIAR.bat` (precisa de Python) ou rode `py -m http.server 8765 -d app`.

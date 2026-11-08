@@ -80,3 +80,28 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 | `app/data/questoes.js` | Lista de questões + gabarito |
 | `tools/extrair.py` | Gera `img/` e `questoes.js` a partir dos PDFs |
 | `tools/conferir.py` | Confere se os recortes têm a questão inteira |
+
+## Pontos fracos
+
+- Cada questão tem **matéria e tema** (ex.: Natureza › Química › Estequiometria), em `app/data/temas.js`. A lista de temas está em `tools/temas.json` e a classificação de cada questão em `tools/classificacao.tsv` (feita lendo o texto de cada questão; as de 2021, cujo PDF tem a fonte embaralhada, pela imagem). Para regerar: `py -P -E tools/temas.py`.
+- A conta usa o **acerto de primeira** (1ª tentativa, sem chute e sem ter pedido ajuda), por tema e por matéria.
+- Para não exagerar com poucas questões, a taxa é puxada para a sua média geral: `(acertos + 4 × média) ÷ (feitas + 4)`. Errar 1 de 1 não vira “0%”.
+- Um tema entra na lista de fracos com pelo menos 3 questões feitas e nota abaixo da média. Uma matéria inteira entra quando está abaixo da média mas nenhum tema dela tem questões suficientes para aparecer sozinho.
+- A análise começa com 15 questões feitas. Fica em **Progresso › Pontos fracos**; o mais fraco aparece também na tela inicial.
+
+### O que muda por causa disso
+
+- **Reforço nos blocos** (ligado por padrão, desliga em Ajustes): cerca de 1 em cada 3 questões novas de um bloco vem dos 3 temas mais fracos. Aparecem com a etiqueta “🎯 Reforço”; o tema só é mostrado depois de responder.
+- **Treinar**: cada tema ou matéria fraca tem um botão que monta um bloco só dele (revisões vencidas do tema primeiro, depois as novas).
+
+## Simulado
+
+- Aba **Simulado**: escolha quantas questões (5 a 180), o tempo (ritmo ENEM de 3 min/questão, um tempo seu ou sem limite), as áreas, uma matéria e de onde vêm as questões (novas, qualquer uma ou só do caderno de erros).
+- Durante a prova não há correção. Dá para pular, voltar e mudar a resposta; a grade de números mostra o que já foi respondido. O relógio continua correndo mesmo fora do app e, quando zera, a prova é entregue sozinha.
+- No fim: nota, tempo por questão, acerto por matéria e gabarito. As respostas entram no histórico como em um bloco normal: errou → caderno de erros. As em branco continuam como novas. Uma revisão que ainda não venceu não sobe de caixa por aparecer no simulado; se você errar, ela volta para a caixa 1.
+
+## Caneta azul
+
+- O botão **✏️ Caneta** (ao lado do A−/A+) deixa rabiscar na folha da questão com tinta azul, com o dedo, a caneta ou o mouse. Desligada, a folha rola normalmente.
+- **↶** desfaz o último traço e **🗑** apaga tudo. Os rabiscos acompanham o A−/A+.
+- Ficam salvos por questão (as 80 mais recentes) e aparecem de novo em “Rever”. Numa tentativa nova, em outro dia, a folha começa limpa, porque o rascunho antigo entregaria a resposta.

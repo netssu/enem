@@ -1,0 +1,121 @@
+{
+  "LC": {
+    "Português": {
+      "POR.int": "Interpretação e inferência",
+      "POR.gen": "Gêneros textuais",
+      "POR.var": "Variação linguística",
+      "POR.fun": "Funções da linguagem",
+      "POR.gra": "Gramática, coesão e semântica",
+      "POR.fig": "Figuras de linguagem",
+      "POR.arg": "Argumentação e publicidade",
+      "POR.tec": "Tecnologias e mídias"
+    },
+    "Literatura": {
+      "LIT.esc": "Escolas literárias",
+      "LIT.poe": "Poesia",
+      "LIT.pro": "Prosa e narrativa"
+    },
+    "Artes": {
+      "ART.vis": "Artes visuais e arquitetura",
+      "ART.mus": "Música",
+      "ART.cen": "Teatro, dança e cinema",
+      "ART.pat": "Arte popular e patrimônio"
+    },
+    "Educação Física": {
+      "EDF.cor": "Corpo, saúde e esporte"
+    },
+    "Língua estrangeira": {
+      "LE.ing": "Inglês",
+      "LE.esp": "Espanhol"
+    }
+  },
+  "CH": {
+    "História": {
+      "HIS.ant": "Antiguidade e Idade Média",
+      "HIS.mod": "Idade Moderna",
+      "HIS.con": "Idade Contemporânea",
+      "HIS.col": "Brasil Colônia",
+      "HIS.imp": "Brasil Império",
+      "HIS.rep": "Brasil República",
+      "HIS.afr": "África, povos indígenas e escravidão"
+    },
+    "Geografia": {
+      "GEO.car": "Cartografia",
+      "GEO.cli": "Clima e meio ambiente",
+      "GEO.nat": "Relevo, solos e recursos naturais",
+      "GEO.urb": "Urbanização e população",
+      "GEO.agr": "Espaço rural e agropecuária",
+      "GEO.eco": "Indústria, energia e economia",
+      "GEO.glo": "Globalização e geopolítica"
+    },
+    "Filosofia": {
+      "FIL.ant": "Filosofia antiga e medieval",
+      "FIL.mod": "Filosofia moderna",
+      "FIL.con": "Filosofia contemporânea",
+      "FIL.eti": "Ética e política"
+    },
+    "Sociologia": {
+      "SOC.cid": "Cidadania, direitos e movimentos sociais",
+      "SOC.cul": "Cultura, identidade e sociedade",
+      "SOC.tra": "Trabalho e desigualdade",
+      "SOC.teo": "Teoria sociológica"
+    }
+  },
+  "CN": {
+    "Biologia": {
+      "BIO.eco": "Ecologia",
+      "BIO.gen": "Genética",
+      "BIO.evo": "Evolução",
+      "BIO.cel": "Citologia e bioquímica",
+      "BIO.fis": "Fisiologia humana",
+      "BIO.sau": "Saúde e doenças",
+      "BIO.ser": "Botânica e zoologia",
+      "BIO.tec": "Biotecnologia"
+    },
+    "Química": {
+      "QUI.ger": "Química geral e atomística",
+      "QUI.est": "Estequiometria e soluções",
+      "QUI.fqu": "Termoquímica, cinética e equilíbrio",
+      "QUI.ele": "Eletroquímica",
+      "QUI.org": "Química orgânica",
+      "QUI.amb": "Química ambiental"
+    },
+    "Física": {
+      "FIS.mec": "Mecânica",
+      "FIS.ene": "Energia e trabalho",
+      "FIS.hid": "Hidrostática",
+      "FIS.ter": "Termologia",
+      "FIS.opt": "Óptica",
+      "FIS.ond": "Ondulatória e acústica",
+      "FIS.ele": "Eletricidade e magnetismo",
+      "FIS.mod": "Física moderna"
+    }
+  },
+  "MT": {
+    "Aritmética": {
+      "ARI.por": "Porcentagem e juros",
+      "ARI.raz": "Razão, proporção e escala",
+      "ARI.med": "Grandezas e unidades",
+      "ARI.ope": "Operações e problemas"
+    },
+    "Álgebra": {
+      "ALG.fun": "Funções afim e quadrática",
+      "ALG.equ": "Equações e sistemas",
+      "ALG.exp": "Exponencial e logaritmo",
+      "ALG.seq": "Sequências (PA e PG)"
+    },
+    "Geometria": {
+      "GEM.pla": "Geometria plana",
+      "GEM.esp": "Geometria espacial",
+      "GEM.ana": "Geometria analítica",
+      "GEM.tri": "Trigonometria",
+      "GEM.vis": "Vistas, projeções e simetria"
+    },
+    "Estatística e probabilidade": {
+      "EST.est": "Estatística (média, mediana, moda)",
+      "EST.gra": "Gráficos e tabelas",
+      "EST.pro": "Probabilidade",
+      "EST.com": "Análise combinatória"
+    }
+  }
+}

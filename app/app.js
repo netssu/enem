@@ -10,6 +10,15 @@ const AREAS = {
   MT: 'Matemática',
 };
 const ORDEM_AREAS = ['LC', 'CH', 'CN', 'MT'];
+// matéria e tema de cada questão (data/temas.js, gerado por tools/temas.py)
+const TEMAS = window.TEMAS || { nomes: {}, q: {} };
+function temaDe(id) { return TEMAS.q[id] || null; }
+function nomeTema(c) { return TEMAS.nomes[c]?.[2] || ''; }
+function materiaDe(c) { return TEMAS.nomes[c]?.[1] || ''; }
+function rotuloTema(c) { return c ? `${materiaDe(c)} › ${nomeTema(c)}` : ''; }
+// um "alvo" de treino é um tema ("QUI.est") ou uma matéria inteira ("QUI")
+function noAlvo(c, alvo) { return !!c && (alvo.includes('.') ? c === alvo : c.startsWith(alvo + '.')); }
+function nomeAlvo(alvo) { return alvo.includes('.') ? nomeTema(alvo) : materiaDe(Object.keys(TEMAS.nomes).find(c => noAlvo(c, alvo))); }
 // Caixas de revisão (sistema Leitner): depois de acertar na caixa N, a próxima revisão é em INTERVALO[N] dias.
 const INTERVALO = { 1: 1, 2: 3, 3: 7, 4: 21 };
 const CAIXA_MAX = 4;
@@ -33,8 +42,11 @@ function padrao() {
       escala: 1.75,
       ordem: 'intercalado',
       areas: [...ORDEM_AREAS],
+      foco: true,   // reforçar pontos fracos nos blocos
       apiKey: '',
     },
+    simulado: null,   // simulado em andamento ou recém-entregue
+    simulados: [],    // histórico: { data, n, ok, seg, limite }
     q: {},      // id -> { s: 'dom'|'rev'|'rec', caixa, prox, h: [[data, letra, ok, segundos, chute]], motivo, nota, video, pulou }
     log: {},    // 'AAAA-MM-DD' -> { n: novas, r: revisões, ok: acertos }
     sessao: null,
@@ -157,23 +169,121 @@ function sequencia() {
   return n;
 }
 
+// ---------------------------------------------------------------- pontos fracos
+// Acerto "de primeira": a 1ª tentativa, sem chute e sem ter pedido ajuda.
+// Para não exagerar com poucas questões, a taxa de cada tema é puxada para a sua média geral
+// (média bayesiana com peso K): 1 erro em 1 questão não vira "0% de acerto".
+const K_FOCO = 4;
+const MIN_FOCO = 3;          // questões feitas num tema para ele poder ser apontado como fraco
+const MIN_ANALISE = 15;      // questões feitas no total para começar a análise
+function analisePontos() {
+  const temas = {};
+  const materias = {};
+  const areas = {};
+  let n = 0, ok = 0;
+  for (const q of POOL()) {
+    const r = reg(q.id);
+    if (!r?.h?.length) continue;
+    const h0 = r.h[0];
+    const acerto = h0[2] === 1 && !h0[4] ? 1 : 0;
+    n++; ok += acerto;
+    const soma = (obj, k, extra) => {
+      const x = obj[k] || (obj[k] = { n: 0, ok: 0, seg: 0, rev: 0, ...extra });
+      x.n++; x.ok += acerto; x.seg += h0[3] || 0; if (r.s === 'rev') x.rev++;
+    };
+    soma(areas, q.area, { area: q.area });
+    const c = temaDe(q.id);
+    if (!c) continue;
+    soma(temas, c, { c, area: q.area });
+    soma(materias, `${q.area}|${materiaDe(c)}`, { area: q.area, nome: materiaDe(c), c: c.split('.')[0], materia: true });
+  }
+  const media = n ? ok / n : 0;
+  const nota = x => (x.ok + K_FOCO * media) / (x.n + K_FOCO);
+  const lista = o => Object.values(o).map(x => ({ ...x, taxa: x.ok / x.n, nota: nota(x), tempo: x.seg / x.n }));
+  const T = lista(temas);
+  const M = lista(materias);
+  const abaixo = x => x.n >= MIN_FOCO && x.nota < media - 0.03;
+  // temas fracos; e matérias fracas cujos temas ainda têm poucas questões para aparecer sozinhos
+  const fracosT = T.filter(abaixo);
+  const fracos = fracosT.concat(M.filter(m => abaixo(m) && !fracosT.some(t => noAlvo(t.c, m.c))))
+    .sort((a, b) => a.nota - b.nota);
+  const fortes = T.filter(x => x.n >= MIN_FOCO && x.nota > media + 0.03).sort((a, b) => b.nota - a.nota);
+  // motivos de erro mais comuns
+  const motivos = {};
+  for (const id in st.q) { const m = st.q[id].motivo; if (m) motivos[m] = (motivos[m] || 0) + 1; }
+  return {
+    n, ok, media, pronto: n >= MIN_ANALISE, temOsTemas: Object.keys(TEMAS.q).length > 0,
+    temas: T, materias: M.sort((a, b) => ORDEM_AREAS.indexOf(a.area) - ORDEM_AREAS.indexOf(b.area) || a.nota - b.nota),
+    areas: lista(areas), fracos, fortes,
+    motivos: Object.entries(motivos).sort((a, b) => b[1] - a[1]),
+  };
+}
+// os temas em que o app vai insistir (os 3 mais fracos que ainda têm questão nova nas áreas escolhidas)
+function temasFoco(an = analisePontos()) {
+  if (!an.pronto) return [];
+  const areas = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS;
+  const comNovas = new Set(POOL().filter(q => !feita(q.id) && areas.includes(q.area)).map(q => temaDe(q.id)));
+  return an.fracos.filter(x => [...comNovas].some(c => noAlvo(c, x.c))).slice(0, 3);
+}
+const DICA_MOTIVO = {
+  'Interpretação': 'Leia o comando da questão antes do texto e sublinhe o que ela pede.',
+  'Desatenção': 'Antes de marcar, releia o comando: “correta”, “incorreta”, “exceto”…',
+  'Conta/cálculo': 'Confira a conta de trás para frente e estime a ordem de grandeza da resposta.',
+  'Faltou tempo': 'Treine simulados com tempo: ~3 min por questão.',
+  'Não sabia o conteúdo': 'Revise a teoria dos seus temas mais fracos (lista acima) antes de fazer mais questões deles.',
+  'Chutei': 'Chute é sinal de conteúdo frágil: os temas mais fracos acima são um bom lugar para começar.',
+  'Precisei de ajuda': 'Refaça amanhã sozinho as questões em que pediu ajuda: elas já estão no caderno de erros.',
+};
+
 // ---------------------------------------------------------------- sessão
-function montarSessao(tam, tipo = 'misto') {
+function embaralhar(l) {
+  for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
+  return l;
+}
+function montarSessao(tam, tipo = 'misto', tema = null) {
   const venc = vencidas();
   let revs = [];
   let novas = [];
-  if (tipo === 'rev') {
+  const foco = {};
+  if (tipo === 'tema') {
+    // treinar um tema: revisões vencidas do tema primeiro, depois questões novas dele
+    revs = venc.filter(q => noAlvo(temaDe(q.id), tema)).slice(0, Math.ceil(tam / 2));
+    novas = POOL().filter(q => !feita(q.id) && noAlvo(temaDe(q.id), tema))
+      .sort((a, b) => b.ano - a.ano || a.num - b.num).slice(0, tam - revs.length);
+    if (novas.length + revs.length < tam) {
+      const ja = new Set(revs.map(q => q.id));
+      revs = revs.concat(emRevisao().filter(q => noAlvo(temaDe(q.id), tema) && !ja.has(q.id)).slice(0, tam - novas.length - revs.length));
+    }
+    novas.forEach(q => { foco[q.id] = tema; });
+  } else if (tipo === 'rev') {
     const base = venc.length ? venc : emRevisao().sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox));
     revs = base.slice(0, tam);
   } else {
-    const cands = filaNovas();
+    let cands = filaNovas();
     const maxRev = cands.length ? Math.ceil(tam / 2) : tam;
     revs = venc.slice(0, maxRev);
-    novas = cands.slice(0, tam - revs.length);
+    const nNovas = tam - revs.length;
+    // reforço: ~1 em cada 3 novas vem dos temas mais fracos
+    const alvo = st.cfg.foco ? temasFoco() : [];
+    if (alvo.length && nNovas >= 2) {
+      const vagas = Math.max(1, Math.round(nNovas / 3));
+      const escolhidas = [];
+      for (let k = 0; k < vagas; k++) {
+        const c = alvo[k % alvo.length].c;
+        const q = cands.find(x => noAlvo(temaDe(x.id), c) && !escolhidas.includes(x));
+        if (q) { escolhidas.push(q); foco[q.id] = c; }
+      }
+      cands = cands.filter(x => !escolhidas.includes(x));
+      novas = cands.slice(0, nNovas - escolhidas.length);
+      // espalha as de reforço no meio das outras
+      escolhidas.forEach((q, k) => novas.splice(Math.min(novas.length, 1 + k * 3), 0, q));
+    } else {
+      novas = cands.slice(0, nNovas);
+    }
   }
   const itens = [];
   const R = revs.map(q => ({ id: q.id, tipo: 'rev' }));
-  const N = novas.map(q => ({ id: q.id, tipo: 'nova' }));
+  const N = novas.map(q => (foco[q.id] ? { id: q.id, tipo: 'nova', foco: foco[q.id] } : { id: q.id, tipo: 'nova' }));
   while (R.length || N.length) {
     if (N.length) itens.push(N.shift());
     if (R.length) itens.push(R.shift());
@@ -218,6 +328,9 @@ function registrar(id, tipo, letra, segundos, ajuda = false) {
     } else {
       r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]);
     }
+  } else if (tipo === 'simrev') {
+    // revisão que apareceu num simulado antes da hora: acertar não adianta a caixa; errar volta para a 1
+    if (!ok) { r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]); }
   } else if (tipo === 'pratica' && !ok) {
     // errou uma que já dominava: volta pro ciclo de revisão
     r.s = 'rev'; r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]);
@@ -262,15 +375,99 @@ function linkProva(q) {
 }
 function imgsHTML(q) {
   const esc2 = st.cfg.escala || 1.75;
-  return q.imgs.map((src, k) => `<img src="${src}" alt="Questão ${q.num}${q.imgs.length > 1 ? ` parte ${k + 1}` : ''}" data-w="${(q.w && q.w[k]) || 270}" style="width:${Math.round(((q.w && q.w[k]) || 270) * esc2)}px" ${k ? 'loading="lazy"' : ''}>`).join('');
+  return `<div class="folha">${q.imgs.map((src, k) => `<img src="${src}" alt="Questão ${q.num}${q.imgs.length > 1 ? ` parte ${k + 1}` : ''}" data-w="${(q.w && q.w[k]) || 270}" style="width:${Math.round(((q.w && q.w[k]) || 270) * esc2)}px" ${k ? 'loading="lazy"' : ''}>`).join('')}<canvas class="tinta" aria-hidden="true"></canvas></div>`;
+}
+
+// ---------- caneta azul: rabiscar na folha da questão, como na prova de papel
+// Os traços ficam salvos por questão, em coordenadas relativas à largura da folha (acompanham o A−/A+).
+// Numa tentativa nova (outro dia), a folha começa limpa — o rascunho velho entregaria a resposta.
+const KEY_TINTA = 'enem.tinta';
+const COR_TINTA = '#1f4fc4';
+let tinta = {};
+try { tinta = JSON.parse(localStorage.getItem(KEY_TINTA)) || {}; } catch { tinta = {}; }
+let canetaLigada = false;
+function salvarTinta() {
+  const ks = Object.keys(tinta);
+  for (const k of ks.slice(0, Math.max(0, ks.length - 80))) delete tinta[k];   // guarda só as 80 últimas
+  try { localStorage.setItem(KEY_TINTA, JSON.stringify(tinta)); } catch { /* cheio */ }
+}
+function ligarTinta(id, limpaAntiga) {
+  const folha = $app.querySelector('.folha');
+  const cv = folha?.querySelector('canvas.tinta');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const salvo = tinta[id];
+  const tracos = salvo && (!limpaAntiga || salvo.d === hoje()) ? salvo.t : [];
+  const bCaneta = $app.querySelector('[data-tinta=caneta]');
+  const bDesfazer = $app.querySelector('[data-tinta=desfazer]');
+  const bLimpar = $app.querySelector('[data-tinta=limpar]');
+  const estilo = w => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = COR_TINTA; ctx.lineWidth = Math.max(1.6, w * 0.0035); };
+  const traco = (t, w) => {
+    ctx.beginPath();
+    t.forEach(([x, y], k) => (k ? ctx.lineTo(x * w, y * w) : ctx.moveTo(x * w, y * w)));
+    if (t.length === 1) ctx.lineTo(t[0][0] * w + 0.5, t[0][1] * w);
+    ctx.stroke();
+  };
+  const desenhar = () => {
+    const w = folha.clientWidth, h = folha.clientHeight, dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    estilo(w);
+    tracos.forEach(t => traco(t, w));
+  };
+  const botoes = () => {
+    $app.classList.toggle('caneta-on', canetaLigada);
+    bCaneta?.classList.toggle('on', canetaLigada);
+    bCaneta?.setAttribute('aria-pressed', canetaLigada);
+    if (bDesfazer) bDesfazer.hidden = !tracos.length;
+    if (bLimpar) bLimpar.hidden = !tracos.length;
+  };
+  const guardar = () => { if (tracos.length) tinta[id] = { d: hoje(), t: tracos }; else delete tinta[id]; salvarTinta(); botoes(); };
+  const ro = new ResizeObserver(desenhar);
+  ro.observe(folha);
+  aoSair(() => ro.disconnect());
+  let atual = null;
+  const pos = e => { const r = cv.getBoundingClientRect(); return [+((e.clientX - r.left) / r.width).toFixed(4), +((e.clientY - r.top) / r.width).toFixed(4)]; };
+  cv.addEventListener('pointerdown', e => {
+    if (!canetaLigada || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    e.preventDefault();
+    try { cv.setPointerCapture(e.pointerId); } catch { /* sem captura: segue desenhando */ }
+    atual = [pos(e)];
+    tracos.push(atual);
+    traco(atual, folha.clientWidth);
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!atual) return;
+    const w = folha.clientWidth;
+    const agrupados = e.getCoalescedEvents?.();
+    for (const ev of (agrupados && agrupados.length ? agrupados : [e])) {
+      const p = pos(ev);
+      const u = atual[atual.length - 1];
+      ctx.beginPath(); ctx.moveTo(u[0] * w, u[1] * w); ctx.lineTo(p[0] * w, p[1] * w); ctx.stroke();
+      atual.push(p);
+    }
+  });
+  const fim = () => { if (!atual) return; atual = null; guardar(); };
+  cv.addEventListener('pointerup', fim);
+  cv.addEventListener('pointercancel', fim);
+  bCaneta?.addEventListener('click', () => { canetaLigada = !canetaLigada; botoes(); });
+  bDesfazer?.addEventListener('click', () => { tracos.pop(); desenhar(); guardar(); });
+  bLimpar?.addEventListener('click', () => { tracos.length = 0; desenhar(); guardar(); });
+  aoSair(() => $app.classList.remove('caneta-on'));
+  botoes();
 }
 function aplicarEscala() {
   document.querySelectorAll('.questao-img img').forEach(im => { im.style.width = Math.round(+im.dataset.w * st.cfg.escala) + 'px'; });
 }
 function controlesTamanho() {
-  return `<span class="tamanho"><button class="btn mini" data-esc="-1" title="Diminuir">A−</button><button class="btn mini" data-esc="1" title="Aumentar">A+</button></span>`;
+  return `<span class="tamanho">
+    <button class="btn mini" data-tinta="desfazer" title="Desfazer o último traço" hidden>↶</button>
+    <button class="btn mini" data-tinta="limpar" title="Apagar os rabiscos" hidden>🗑</button>
+    <button class="btn mini caneta" data-tinta="caneta" aria-pressed="false" title="Caneta azul: rabiscar na folha">✏️ Caneta</button>
+    <button class="btn mini" data-esc="-1" title="Diminuir">A−</button><button class="btn mini" data-esc="1" title="Aumentar">A+</button></span>`;
 }
-function ligarTamanho() {
+function ligarTamanho(id, limpaAntiga = true) {
+  if (id) ligarTinta(id, limpaAntiga);
   document.querySelectorAll('[data-esc]').forEach(b => b.addEventListener('click', () => {
     st.cfg.escala = Math.min(3.2, Math.max(1, Math.round(((st.cfg.escala || 1.75) + 0.2 * +b.dataset.esc) * 100) / 100));
     salvar();
@@ -316,6 +513,8 @@ function telaInicio() {
       <p class="small muted" style="margin-bottom:0">Um bloco de ${st.cfg.bloco} leva ~${st.cfg.bloco * 3} min. Pode parar no meio: o app guarda onde você parou.</p>
     </section>
 
+    ${cardFoco()}
+
     <section class="card">
       <h2>Seu cronograma</h2>
       <div class="grid2">
@@ -338,6 +537,20 @@ function telaInicio() {
   $app.querySelector('[data-acao=bloco]')?.addEventListener('click', () => iniciar(st.cfg.bloco));
   $app.querySelector('[data-acao=rapido]')?.addEventListener('click', () => iniciar(5));
   $app.querySelector('[data-acao=revisar]')?.addEventListener('click', () => iniciar(p.vencidas, 'rev'));
+  ligarTreinar();
+}
+function cardFoco() {
+  const an = analisePontos();
+  if (!an.temOsTemas) return '';
+  const sim = st.simulado && !st.simulado.fim ? '<p class="aviso">Você tem um <a href="#/simulado">simulado em andamento</a> — o relógio continua correndo.</p>' : '';
+  if (!an.pronto) return sim ? `<section class="card">${sim}</section>` : '';
+  const f = an.fracos[0];
+  return `<section class="card">
+    ${sim}
+    <h2>Seu ponto mais fraco</h2>
+    ${f ? `<ul class="lista">${linhaTema(f, an.media)}</ul>` : '<p class="muted">Nenhum tema claramente abaixo da sua média por enquanto.</p>'}
+    <a href="#/pontos">Ver todos os pontos fracos →</a>
+  </section>`;
 }
 function saudacao() {
   const h = new Date().getHours();
@@ -355,9 +568,9 @@ function semanaHTML() {
   }
   return out + '</div>';
 }
-function iniciar(tam, tipo) {
-  if (!montarSessao(tam, tipo)) {
-    alert(tipo === 'rev' ? 'Nenhuma revisão pendente agora.' : 'Não há questões disponíveis com os filtros atuais. Confira as áreas em Ajustes.');
+function iniciar(tam, tipo, tema) {
+  if (!montarSessao(tam, tipo, tema)) {
+    alert(tipo === 'rev' ? 'Nenhuma revisão pendente agora.' : tipo === 'tema' ? 'Você já fez todas as questões desse tema!' : 'Não há questões disponíveis com os filtros atuais. Confira as áreas em Ajustes.');
     return;
   }
   location.hash = '#/estudar';
@@ -377,7 +590,8 @@ function telaEstudar() {
 
   const rotulo = item.tipo === 'rev'
     ? `<span class="chip tag-rev">↺ Revisão · caixa ${r?.caixa || 1}</span>`
-    : item.tipo === 'pratica' ? '<span class="chip">Prática</span>' : '<span class="chip">Nova</span>';
+    : item.tipo === 'pratica' ? '<span class="chip">Prática</span>'
+    : item.foco ? '<span class="chip tag-foco" title="Questão de um dos seus temas mais fracos">🎯 Reforço</span>' : '<span class="chip">Nova</span>';
 
   $app.innerHTML = `
     <div class="q-prog"><i style="width:${pct(s.i, s.itens.length)}%"></i></div>
@@ -403,7 +617,7 @@ function telaEstudar() {
       </div>
     </div>
   `;
-  ligarTamanho();
+  ligarTamanho(q.id);
   // pré-carrega a próxima
   const prox = s.itens[s.i + 1];
   if (prox && BYID[prox.id]) BYID[prox.id].imgs.forEach(src => { const im = new Image(); im.src = src; });
@@ -456,6 +670,7 @@ function telaEstudar() {
       <div class="feedback ${rr.ok ? 'ok' : naoSei ? 'neutro' : 'erro'}">
         <h2>${rr.ok ? (comAjuda ? 'Acertou, com ajuda' : 'Acertou!') : naoSei ? `A resposta é ${q.resp}` : `Errou — a resposta é ${q.resp}`}${naoSei ? '' : lento}</h2>
         ${estado ? `<p style="margin:0">${estado}</p>` : ''}
+        ${temaDe(q.id) ? `<p class="small muted" style="margin:6px 0 0">Tema: ${esc(rotuloTema(temaDe(q.id)))}</p>` : ''}
         ${rr.ok && !comAjuda && item.tipo !== 'pratica' ? `<label style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="chute" ${reg2.h[reg2.h.length - 1][4] ? 'checked' : ''}> Foi chute / não tinha certeza (mandar para revisão)</label>` : ''}
       </div>
       <section class="card">
@@ -608,7 +823,7 @@ function verQuestao(id) {
   `;
   const ult = r?.h?.[r.h.length - 1];
   document.getElementById('btn-exp').addEventListener('click', () => explicar(q, ult?.[1], document.getElementById('exp')));
-  ligarTamanho();
+  ligarTamanho(id, false);
   window.scrollTo(0, 0);
 }
 
@@ -655,6 +870,311 @@ function telaErros() {
   $app.querySelector('[data-acao=rapido]')?.addEventListener('click', () => iniciar(5, 'rev'));
 }
 
+// ---------- pontos fracos
+function barraTaxa(x, media) {
+  const p = Math.round(x.taxa * 100);
+  const cor = x.nota < media - 0.03 ? 'var(--erro)' : x.nota > media + 0.03 ? 'var(--ok)' : 'var(--muted)';
+  return `<div class="taxa"><div class="barra fina"><i style="width:${p}%;background:${cor}"></i><b style="left:${Math.round(media * 100)}%" title="sua média: ${Math.round(media * 100)}%"></b></div><span>${p}%</span></div>`;
+}
+function linhaTema(x, media, botao = true) {
+  return `<li>
+    <div class="cresce">
+      <div class="tit">${esc(nomeAlvo(x.c))}</div>
+      <div class="small muted">${chipArea(x.area)} ${x.materia ? 'matéria toda' : esc(materiaDe(x.c))} · ${x.ok}/${x.n} de primeira${x.rev ? ` · ${x.rev} em revisão` : ''}</div>
+      ${barraTaxa(x, media)}
+    </div>
+    ${botao ? `<button class="btn" data-treinar="${x.c}">Treinar</button>` : ''}
+  </li>`;
+}
+function ligarTreinar() {
+  $app.querySelectorAll('[data-treinar]').forEach(b => b.addEventListener('click', () => iniciar(st.cfg.bloco, 'tema', b.dataset.treinar)));
+}
+function telaPontos() {
+  const an = analisePontos();
+  const foco = temasFoco(an);
+  let corpo;
+  if (!an.temOsTemas) {
+    corpo = '<section class="card"><p>Os temas das questões ainda não foram carregados (falta <code>data/temas.js</code>).</p></section>';
+  } else if (!an.pronto) {
+    corpo = `<section class="card destaque"><h2>Ainda é cedo</h2>
+      <p>Faça pelo menos <b>${MIN_ANALISE} questões</b> para o app começar a apontar seus pontos fracos (faltam ${MIN_ANALISE - an.n}).</p>
+      <div class="barra"><i style="width:${pct(an.n, MIN_ANALISE)}%"></i></div></section>`;
+  } else {
+    const porArea = ORDEM_AREAS.map(a => {
+      const ms = an.materias.filter(m => m.area === a);
+      if (!ms.length) return '';
+      return `<h3 style="margin-top:14px">${chipArea(a)}</h3><ul class="lista">${ms.map(m => {
+        const ts = an.temas.filter(t => t.area === a && materiaDe(t.c) === m.nome).sort((x, y) => x.nota - y.nota);
+        return `<li class="bloco-materia"><details><summary><span class="cresce"><span class="tit">${esc(m.nome)}</span> <span class="small muted">${m.ok}/${m.n}</span>${barraTaxa(m, an.media)}</span></summary>
+          <ul class="lista">${ts.map(t => linhaTema(t, an.media, t.n >= 1)).join('')}</ul></details></li>`;
+      }).join('')}</ul>`;
+    }).join('');
+    const lentas = an.areas.filter(x => x.n >= 5 && x.tempo > 200).sort((a, b) => b.tempo - a.tempo);
+    const motivo = an.motivos[0];
+    corpo = `
+      <section class="card destaque">
+        <h2>Onde você mais erra</h2>
+        <p class="small muted">Acerto de primeira (sem chute nem ajuda). A risca na barra é a sua média geral: <b>${Math.round(an.media * 100)}%</b>. Temas com poucas questões ficam perto da média até você fazer mais delas.</p>
+        ${an.fracos.length ? `<ul class="lista">${an.fracos.slice(0, 6).map(x => linhaTema(x, an.media)).join('')}</ul>`
+          : '<p>Nenhum tema está claramente abaixo da sua média ainda. Continue fazendo questões!</p>'}
+      </section>
+      ${foco.length && st.cfg.foco ? `<section class="card"><h2>🎯 O que muda nos seus blocos</h2>
+        <p>Cerca de <b>1 em cada 3 questões novas</b> dos blocos vem destes temas, até eles subirem para a sua média:</p>
+        <p>${foco.map(x => `<span class="chip tag-foco">${esc(nomeAlvo(x.c))}</span>`).join(' ')}</p>
+        <p class="small muted" style="margin-bottom:0">Dá para desligar em <a href="#/ajustes">Ajustes</a>. Também dá para treinar um tema direto no botão “Treinar”.</p></section>` : ''}
+      ${an.fortes.length ? `<section class="card"><h2>Seus pontos fortes</h2><ul class="lista">${an.fortes.slice(0, 4).map(x => linhaTema(x, an.media, false)).join('')}</ul></section>` : ''}
+      ${motivo || lentas.length ? `<section class="card"><h2>Padrões</h2>
+        ${motivo ? `<p>Motivo de erro mais comum: <b>${esc(motivo[0])}</b> (${motivo[1]}×). ${DICA_MOTIVO[motivo[0]] || ''}</p>` : ''}
+        ${lentas.map(x => `<p>${chipArea(x.area)} você leva em média <b>${Math.round(x.tempo / 60 * 10) / 10} min</b> por questão — no ENEM o ritmo é ~3 min. Experimente um <a href="#/simulado">simulado com tempo</a>.</p>`).join('')}
+      </section>` : ''}
+      <section class="card"><h2>Todas as matérias</h2><p class="small muted">Toque numa matéria para ver os temas.</p>${porArea}</section>`;
+  }
+  $app.innerHTML = `<h1>Pontos fracos</h1><p class="muted">${an.n} questões feitas · ${Math.round(an.media * 100)}% de acerto de primeira</p>${corpo}`;
+  ligarTreinar();
+}
+
+// ---------- simulado
+// Prova com N questões e tempo: sem correção no meio, dá para pular e voltar, e no fim (ou quando o
+// tempo acaba) mostra o resultado. As respostas entram no histórico: errou → caderno de erros.
+const SIM_PADRAO = { n: 20, tempo: 'enem', minutos: 60, areas: [...ORDEM_AREAS], materia: '', origem: 'novas' };
+function simCfg() { return { ...SIM_PADRAO, ...(st.cfg.sim || {}) }; }
+function fmtTempo(s) {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`;
+}
+function candidatosSim(c) {
+  return POOL().filter(q => c.areas.includes(q.area)
+    && (!c.materia || `${q.area}|${materiaDe(temaDe(q.id))}` === c.materia)
+    && (c.origem === 'todas' || (c.origem === 'erros' ? reg(q.id)?.s === 'rev' : !feita(q.id))));
+}
+function telaSimulado() {
+  const sim = st.simulado;
+  if (sim && !sim.fim) return provaSimulado();
+  if (sim && sim.fim) return resultadoSimulado();
+  const c = simCfg();
+  const materias = [...new Set(Object.values(TEMAS.nomes).map(([a, m]) => `${a}|${m}`))];
+  const desenhar = () => {
+    const disp = candidatosSim(c).length;
+    const n = Math.min(c.n, disp);
+    const lim = c.tempo === 'enem' ? n * 180 : c.tempo === 'livre' ? null : c.minutos * 60;
+    document.getElementById('sim-resumo').innerHTML = disp
+      ? `<b>${n} questões</b> · ${lim ? `<b>${fmtTempo(lim)}</b> de prova` : 'sem limite de tempo'}${disp < c.n ? ` <span class="small muted">(só há ${disp} com esses filtros)</span>` : ''}`
+      : '<span class="aviso">Nenhuma questão com esses filtros.</span>';
+    document.getElementById('sim-ir').disabled = !disp;
+  };
+  const hist = (st.simulados || []).slice(-6).reverse();
+  $app.innerHTML = `
+    <h1>Simulado</h1>
+    <p class="muted">Responda tudo no seu ritmo, com o relógio correndo. A correção vem só no final.</p>
+    <section class="card destaque">
+      <label class="campo">Quantas questões?</label>
+      <div class="opcoes" id="sim-n">${[5, 10, 20, 45, 90].map(n => `<button class="op ${c.n === n ? 'on' : ''}" data-n="${n}">${n}</button>`).join('')}
+        <input type="number" id="sim-n-livre" min="1" max="180" value="${[5, 10, 20, 45, 90].includes(c.n) ? '' : c.n}" placeholder="outro" aria-label="Outra quantidade"></div>
+      <label class="campo">Tempo</label>
+      <div class="opcoes" id="sim-t">
+        <button class="op ${c.tempo === 'enem' ? 'on' : ''}" data-t="enem">Ritmo ENEM (3 min/questão)</button>
+        <button class="op ${c.tempo === 'fixo' ? 'on' : ''}" data-t="fixo">Escolher</button>
+        <button class="op ${c.tempo === 'livre' ? 'on' : ''}" data-t="livre">Sem limite</button>
+      </div>
+      <div id="sim-min-box" ${c.tempo === 'fixo' ? '' : 'hidden'} style="margin-top:8px"><input type="number" id="sim-min" min="1" max="600" value="${c.minutos}" style="width:110px"> minutos</div>
+      <label class="campo">Áreas</label>
+      <div class="dias">${ORDEM_AREAS.map(a => `<label><input type="checkbox" data-sim-area="${a}" ${c.areas.includes(a) ? 'checked' : ''}> ${AREAS[a]}</label>`).join('')}</div>
+      ${materias.length ? `<label class="campo" for="sim-mat">Matéria</label>
+      <select id="sim-mat"><option value="">Todas as matérias das áreas marcadas</option>${ORDEM_AREAS.map(a => `<optgroup label="${AREAS[a]}">${materias.filter(m => m.startsWith(a + '|')).map(m => `<option value="${esc(m)}" ${c.materia === m ? 'selected' : ''}>${esc(m.split('|')[1])}</option>`).join('')}</optgroup>`).join('')}</select>` : ''}
+      <label class="campo" for="sim-origem">Quais questões?</label>
+      <select id="sim-origem">
+        <option value="novas" ${c.origem === 'novas' ? 'selected' : ''}>Só as que você ainda não fez</option>
+        <option value="todas" ${c.origem === 'todas' ? 'selected' : ''}>Qualquer uma (inclui as já feitas)</option>
+        <option value="erros" ${c.origem === 'erros' ? 'selected' : ''}>Só do caderno de erros</option>
+      </select>
+      <p id="sim-resumo" style="margin:16px 0 0"></p>
+      <div class="linha-btns"><button class="btn primario grande" id="sim-ir">Começar simulado</button></div>
+    </section>
+    ${hist.length ? `<section class="card"><h2>Seus últimos simulados</h2><ul class="lista">${hist.map(h => `<li><div><span class="tit">${h.ok}/${h.n} (${pct(h.ok, h.n)}%)</span><div class="small muted">${fmt(h.data)} · ${fmtTempo(h.seg)}${h.limite ? ` de ${fmtTempo(h.limite)}` : ''}</div></div></li>`).join('')}</ul></section>` : ''}
+  `;
+  const guardar = () => { st.cfg.sim = c; salvar(); desenhar(); };
+  $app.querySelectorAll('[data-n]').forEach(b => b.addEventListener('click', () => {
+    c.n = +b.dataset.n; document.getElementById('sim-n-livre').value = '';
+    $app.querySelectorAll('[data-n]').forEach(x => x.classList.toggle('on', x === b)); guardar();
+  }));
+  document.getElementById('sim-n-livre').addEventListener('input', e => {
+    const v = Math.min(180, Math.max(1, Math.round(+e.target.value || 0)));
+    if (!e.target.value) return;
+    c.n = v; $app.querySelectorAll('[data-n]').forEach(x => x.classList.remove('on')); guardar();
+  });
+  $app.querySelectorAll('[data-t]').forEach(b => b.addEventListener('click', () => {
+    c.tempo = b.dataset.t;
+    $app.querySelectorAll('[data-t]').forEach(x => x.classList.toggle('on', x === b));
+    document.getElementById('sim-min-box').hidden = c.tempo !== 'fixo'; guardar();
+  }));
+  document.getElementById('sim-min').addEventListener('input', e => { c.minutos = Math.min(600, Math.max(1, Math.round(+e.target.value || 1))); guardar(); });
+  $app.querySelectorAll('[data-sim-area]').forEach(i => i.addEventListener('change', () => {
+    c.areas = [...$app.querySelectorAll('[data-sim-area]:checked')].map(x => x.dataset.simArea);
+    if (c.materia && !c.areas.includes(c.materia.split('|')[0])) { c.materia = ''; document.getElementById('sim-mat').value = ''; }
+    guardar();
+  }));
+  document.getElementById('sim-mat')?.addEventListener('change', e => {
+    c.materia = e.target.value;
+    if (c.materia) { const a = c.materia.split('|')[0]; if (!c.areas.includes(a)) { c.areas.push(a); $app.querySelector(`[data-sim-area="${a}"]`).checked = true; } }
+    guardar();
+  });
+  document.getElementById('sim-origem').addEventListener('change', e => { c.origem = e.target.value; guardar(); });
+  document.getElementById('sim-ir').addEventListener('click', () => {
+    const qs = embaralhar(candidatosSim(c)).slice(0, c.n)
+      .sort((a, b) => ORDEM_AREAS.indexOf(a.area) - ORDEM_AREAS.indexOf(b.area) || a.ano - b.ano || a.num - b.num);
+    if (!qs.length) return;
+    st.simulado = {
+      ids: qs.map(q => q.id), resp: {}, seg: {}, i: 0, inicio: Date.now(), fim: null,
+      limite: c.tempo === 'enem' ? qs.length * 180 : c.tempo === 'livre' ? null : c.minutos * 60,
+    };
+    salvar();
+    rota();
+  });
+  desenhar();
+}
+function provaSimulado() {
+  const sim = st.simulado;
+  const q = BYID[sim.ids[sim.i]];
+  const total = sim.ids.length;
+  const respondidas = () => sim.ids.filter(id => sim.resp[id]).length;
+  const entrada = Date.now();
+  let saiu = false;
+  const contarTempo = () => { if (saiu) return; saiu = true; sim.seg[q.id] = (sim.seg[q.id] || 0) + Math.round((Date.now() - entrada) / 1000); salvar(); };
+  $app.innerHTML = `
+    <div class="q-prog"><i style="width:${pct(respondidas(), total)}%"></i></div>
+    <div class="q-topo">
+      <div class="info">${chipArea(q.area)} <span class="chip">Simulado</span></div>
+      <div class="info"><span class="relogio" id="relogio">—</span>
+        <button class="btn mini" id="sim-grade-btn" aria-expanded="false">${sim.i + 1}/${total} ▾</button>
+        <button class="btn mini" id="sim-entregar">Entregar</button></div>
+    </div>
+    <div class="sim-grade" id="sim-grade" hidden>${sim.ids.map((id, k) => `<button class="${sim.resp[id] ? 'feita' : ''} ${k === sim.i ? 'atual' : ''}" data-ir="${k}" title="Questão ${k + 1}${sim.resp[id] ? ': ' + sim.resp[id] : ''}">${k + 1}</button>`).join('')}</div>
+    <div class="q-titulo"><h2>${tituloQ(q)}</h2><span class="ferramentas">${controlesTamanho()}</span></div>
+    <div class="questao-img">${imgsHTML(q)}</div>
+    <div class="respostas">
+      <div class="alts" role="radiogroup" aria-label="Alternativas">${'ABCDE'.split('').map(l => `<button class="alt ${sim.resp[q.id] === l ? 'sel' : ''}" role="radio" aria-checked="${sim.resp[q.id] === l}" data-l="${l}">${l}</button>`).join('')}</div>
+      <div class="acoes">
+        <span class="secundarias"><button class="btn fantasma" id="sim-ant" ${sim.i ? '' : 'disabled'}>← Anterior</button></span>
+        <button class="btn primario" id="sim-prox">${sim.i + 1 < total ? 'Próxima →' : 'Revisar e entregar'}</button>
+      </div>
+    </div>
+  `;
+  ligarTamanho(q.id);
+  const prox = sim.ids[sim.i + 1];
+  if (prox) BYID[prox].imgs.forEach(src => { const im = new Image(); im.src = src; });
+  const ir = k => { contarTempo(); sim.i = Math.max(0, Math.min(total - 1, k)); salvar(); window.scrollTo(0, 0); rota(); };
+  const relogio = document.getElementById('relogio');
+  const tick = () => {
+    const passou = (Date.now() - sim.inicio) / 1000;
+    if (sim.limite) {
+      const resta = sim.limite - passou;
+      relogio.textContent = '⏱ ' + fmtTempo(resta);
+      relogio.classList.toggle('acabando', resta < 300);
+      if (resta <= 0) { clearInterval(timer); contarTempo(); setTimeout(() => entregarSimulado(true)); }
+    } else relogio.textContent = '⏱ ' + fmtTempo(passou);
+  };
+  const timer = setInterval(tick, 1000);
+  tick();
+  aoSair(() => { clearInterval(timer); contarTempo(); });
+  $app.querySelectorAll('.alt').forEach(b => b.addEventListener('click', () => {
+    const l = b.dataset.l;
+    if (sim.resp[q.id] === l) delete sim.resp[q.id]; else sim.resp[q.id] = l;   // tocar de novo desmarca
+    salvar();
+    $app.querySelectorAll('.alt').forEach(x => { const on = sim.resp[q.id] === x.dataset.l; x.classList.toggle('sel', on); x.setAttribute('aria-checked', on); });
+    $app.querySelector(`[data-ir="${sim.i}"]`).classList.toggle('feita', !!sim.resp[q.id]);
+    $app.querySelector('.q-prog > i').style.width = pct(respondidas(), total) + '%';
+  }));
+  document.getElementById('sim-ant').addEventListener('click', () => ir(sim.i - 1));
+  document.getElementById('sim-prox').addEventListener('click', () => {
+    if (sim.i + 1 < total) return ir(sim.i + 1);
+    abrirGrade(true);
+  });
+  const grade = document.getElementById('sim-grade');
+  const gbtn = document.getElementById('sim-grade-btn');
+  const abrirGrade = (forcar) => {
+    grade.hidden = forcar ? false : !grade.hidden;
+    gbtn.setAttribute('aria-expanded', !grade.hidden);
+    if (!grade.hidden) grade.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+  gbtn.addEventListener('click', () => abrirGrade());
+  grade.querySelectorAll('[data-ir]').forEach(b => b.addEventListener('click', () => ir(+b.dataset.ir)));
+  document.getElementById('sim-entregar').addEventListener('click', () => {
+    const faltam = total - respondidas();
+    if (!confirm(faltam ? `Ainda faltam ${faltam} ${faltam === 1 ? 'questão' : 'questões'} sem resposta. Entregar mesmo assim?` : 'Entregar o simulado?')) return;
+    contarTempo();
+    entregarSimulado(false);
+  });
+  const teclas = e => {
+    if (e.target.matches?.('input, textarea, select')) return;
+    const k = e.key.toUpperCase();
+    if ('ABCDE'.includes(k) && k.length === 1) $app.querySelector(`.alt[data-l="${k}"]`)?.click();
+    else if (e.key === 'ArrowRight' || e.key === 'Enter') document.getElementById('sim-prox').click();
+    else if (e.key === 'ArrowLeft' && sim.i) ir(sim.i - 1);
+  };
+  document.addEventListener('keydown', teclas);
+  aoSair(() => document.removeEventListener('keydown', teclas));
+}
+function entregarSimulado(acabouTempo) {
+  const sim = st.simulado;
+  if (!sim || sim.fim) return;
+  const h = hoje();
+  sim.fim = Date.now();
+  sim.acabouTempo = acabouTempo;
+  sim.ok = 0;
+  for (const id of sim.ids) {
+    const letra = sim.resp[id];
+    if (!letra) continue;   // em branco: a questão continua como estava
+    const r = reg(id);
+    const tipo = r?.s === 'rev' ? (r.prox <= h ? 'rev' : 'simrev') : feita(id) ? 'pratica' : 'nova';
+    if (registrar(id, tipo, letra, sim.seg[id] || 0)) sim.ok++;
+  }
+  const seg = Math.round((sim.fim - sim.inicio) / 1000);
+  (st.simulados ||= []).push({ data: h, n: sim.ids.length, ok: sim.ok, seg: sim.limite ? Math.min(seg, sim.limite) : seg, limite: sim.limite });
+  salvar();
+  if (location.hash === '#/simulado') rota(); else location.hash = '#/simulado';
+}
+function resultadoSimulado() {
+  const sim = st.simulado;
+  const n = sim.ids.length;
+  const brancos = sim.ids.filter(id => !sim.resp[id]).length;
+  const seg = Math.round((sim.fim - sim.inicio) / 1000);
+  const usado = sim.limite ? Math.min(seg, sim.limite) : seg;
+  const grupos = {};
+  for (const id of sim.ids) {
+    const q = BYID[id];
+    const c = temaDe(id);
+    const k = c ? `${q.area}|${materiaDe(c)}` : `${q.area}|${AREAS[q.area]}`;
+    const g = grupos[k] || (grupos[k] = { area: q.area, nome: k.split('|')[1], n: 0, ok: 0 });
+    g.n++; if (sim.resp[id] === q.resp) g.ok++;
+  }
+  const G = Object.values(grupos).sort((a, b) => ORDEM_AREAS.indexOf(a.area) - ORDEM_AREAS.indexOf(b.area) || a.ok / a.n - b.ok / b.n);
+  const erradas = sim.ids.filter(id => sim.resp[id] !== BYID[id].resp);
+  $app.innerHTML = `
+    <section class="card destaque" style="text-align:center">
+      <h1>${sim.acabouTempo ? 'Acabou o tempo!' : 'Simulado entregue'}</h1>
+      <p style="font-size:40px;margin:8px 0;font-weight:800">${sim.ok}/${n}</p>
+      <p class="muted">${pct(sim.ok, n)}% de acerto · ${fmtTempo(usado)}${sim.limite ? ` de ${fmtTempo(sim.limite)}` : ''} · ${fmtTempo(usado / n)} por questão${brancos ? ` · ${brancos} em branco` : ''}</p>
+      <p class="small muted">As erradas já foram para o caderno de erros${brancos ? ' (as em branco continuam como novas)' : ''}.</p>
+      <div class="linha-btns" style="justify-content:center">
+        <button class="btn primario" id="sim-novo">Novo simulado</button>
+        <a class="btn" href="#/pontos">Ver pontos fracos</a>
+      </div>
+    </section>
+    <section class="card"><h2>Por matéria</h2><ul class="lista">${G.map(g => `<li><div class="cresce"><div>${chipArea(g.area)} <span class="tit">${esc(g.nome)}</span> <span class="small muted">${g.ok}/${g.n}</span></div>
+      <div class="taxa"><div class="barra fina"><i style="width:${pct(g.ok, g.n)}%;background:${g.ok / g.n >= 0.6 ? 'var(--ok)' : g.ok / g.n >= 0.4 ? 'var(--aviso)' : 'var(--erro)'}"></i></div><span>${pct(g.ok, g.n)}%</span></div></div></li>`).join('')}</ul></section>
+    <section class="card"><h2>Gabarito</h2>
+      <div class="sim-gabarito">${sim.ids.map((id, k) => { const q = BYID[id]; const r = sim.resp[id]; const cls = !r ? 'branco' : r === q.resp ? 'certa' : 'errada';
+        return `<button class="${cls}" data-ver="${id}" title="${esc(tituloQ(q))}${temaDe(id) ? ' — ' + esc(rotuloTema(temaDe(id))) : ''}"><b>${k + 1}</b><span>${r || '–'}${r === q.resp ? '' : ` → ${q.resp}`}</span></button>`; }).join('')}</div>
+      <p class="small muted">Toque numa questão para rever com a explicação.</p>
+    </section>
+    ${erradas.length ? `<section class="card"><h2>Erradas</h2><ul class="lista">${erradas.map(id => { const q = BYID[id];
+      return `<li><div><div class="tit">${tituloQ(q)}</div><div class="small muted">${chipArea(q.area)} ${esc(rotuloTema(temaDe(id)))} · você: ${sim.resp[id] || 'em branco'} · certa: ${q.resp}</div></div><button class="btn" data-ver="${id}">Rever</button></li>`; }).join('')}</ul></section>` : ''}
+  `;
+  $app.querySelectorAll('[data-ver]').forEach(b => b.addEventListener('click', () => { location.hash = '#/ver/' + b.dataset.ver; }));
+  document.getElementById('sim-novo').addEventListener('click', () => { st.simulado = null; salvar(); rota(); });
+}
+
 // ---------- progresso
 function telaProgresso() {
   const pool = POOL();
@@ -687,6 +1207,7 @@ function telaProgresso() {
   const totOk = porArea.reduce((s, x) => s + x.primeira, 0);
   $app.innerHTML = `
     <h1>Progresso</h1>
+    <a class="btn grande" href="#/pontos" style="margin-top:8px">🎯 Ver meus pontos fracos</a>
     <section class="card">
       <div class="grid2">
         <div class="stat"><b>${tot}</b><span>questões feitas de ${pool.length}</span></div>
@@ -745,6 +1266,8 @@ function telaAjustes() {
       <label class="campo">Áreas</label>
       <div class="dias">${ORDEM_AREAS.map(a => `<label><input type="checkbox" data-area="${a}" ${c.areas.includes(a) ? 'checked' : ''}> ${AREAS[a]}</label>`).join('')}</div>
       <p class="small muted">Desmarcar uma área só muda o que aparece nos blocos; o cronograma continua contando todas.</p>
+      <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="foco" ${c.foco ? 'checked' : ''}> 🎯 Reforçar pontos fracos</label></div>
+      <p class="small muted">Ligado: cerca de 1 em cada 3 questões novas dos blocos vem dos seus 3 temas mais fracos (veja em Progresso › Pontos fracos).</p>
     </section>
     <section class="card">
       <h2>Explicações com IA (opcional)</h2>
@@ -769,6 +1292,7 @@ function telaAjustes() {
   g('bloco').addEventListener('change', e => { c.bloco = +e.target.value; salvar(); });
   g('lingua').addEventListener('change', e => { c.lingua = e.target.value; salvar(); });
   g('ordem').addEventListener('change', e => { c.ordem = e.target.value; salvar(); });
+  g('foco').addEventListener('change', e => { c.foco = e.target.checked; salvar(); });
   g('apikey').addEventListener('change', e => { c.apiKey = e.target.value.trim(); salvar(); });
   $app.querySelectorAll('[data-dia]').forEach(i => i.addEventListener('change', () => {
     c.dias = [...$app.querySelectorAll('[data-dia]:checked')].map(x => +x.dataset.dia); salvar();
@@ -943,10 +1467,13 @@ function rota() {
     return;
   }
   const [, pagina = '', arg] = location.hash.split('/');
-  $app.classList.toggle('larga', pagina === 'estudar' || pagina === 'ver');
+  const emProva = pagina === 'simulado' && st.simulado && !st.simulado.fim;
+  $app.classList.toggle('larga', pagina === 'estudar' || pagina === 'ver' || emProva);
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('ativo',
-    a.dataset.nav === (pagina || 'inicio')));
+    a.dataset.nav === ({ pontos: 'progresso' }[pagina] || pagina || 'inicio')));
   if (pagina === 'estudar') telaEstudar();
+  else if (pagina === 'simulado') telaSimulado();
+  else if (pagina === 'pontos') telaPontos();
   else if (pagina === 'erros') telaErros();
   else if (pagina === 'progresso') telaProgresso();
   else if (pagina === 'ajustes') telaAjustes();

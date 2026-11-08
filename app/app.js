@@ -13,7 +13,7 @@ const ORDEM_AREAS = ['LC', 'CH', 'CN', 'MT'];
 // Caixas de revisão (sistema Leitner): depois de acertar na caixa N, a próxima revisão é em INTERVALO[N] dias.
 const INTERVALO = { 1: 1, 2: 3, 3: 7, 4: 21 };
 const CAIXA_MAX = 4;
-const MOTIVOS = ['Não sabia o conteúdo', 'Interpretação', 'Desatenção', 'Conta/cálculo', 'Chutei', 'Faltou tempo'];
+const MOTIVOS = ['Precisei de ajuda', 'Não sabia o conteúdo', 'Interpretação', 'Desatenção', 'Conta/cálculo', 'Chutei', 'Faltou tempo'];
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
 const MODELO = 'claude-opus-5-5';
@@ -163,7 +163,8 @@ function montarSessao(tam, tipo = 'misto') {
   let revs = [];
   let novas = [];
   if (tipo === 'rev') {
-    revs = venc.slice(0, tam);
+    const base = venc.length ? venc : emRevisao().sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox));
+    revs = base.slice(0, tam);
   } else {
     const cands = filaNovas();
     const maxRev = cands.length ? Math.ceil(tam / 2) : tam;
@@ -191,18 +192,22 @@ function abrirQuestaoAvulsa(id) {
   location.hash = '#/estudar';
 }
 
-function registrar(id, tipo, letra, segundos) {
+function registrar(id, tipo, letra, segundos, ajuda = false) {
   const q = BYID[id];
   const ok = letra === q.resp;
   const h = hoje();
   const r = st.q[id] || (st.q[id] = { h: [] });
-  r.h.push([h, letra, ok ? 1 : 0, segundos, 0]);
+  r.h.push([h, letra, ok ? 1 : 0, segundos, ajuda ? 2 : 0]);
   delete r.pulou;
   const lg = st.log[h] || (st.log[h] = { n: 0, r: 0, ok: 0 });
   if (tipo === 'nova') lg.n++; else lg.r++;
   if (ok) lg.ok++;
 
-  if (tipo === 'nova') {
+  if (ajuda) {
+    // usou "ver como fazer": mesmo acertando, volta para refazer sozinho
+    r.s = 'rev'; r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]);
+    if (!r.motivo) r.motivo = 'Precisei de ajuda';
+  } else if (tipo === 'nova') {
     if (ok) r.s = 'dom';
     else { r.s = 'rev'; r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]); }
   } else if (tipo === 'rev') {
@@ -248,7 +253,7 @@ function tituloQ(q) { return `ENEM ${q.ano} · Questão ${q.num}${q.lingua ? (q.
 function linkVideo(q) {
   const r = reg(q.id);
   if (r?.video) return r.video;
-  const termo = `ENEM ${q.ano} questão ${q.num} ${q.lingua === 'ESP' ? 'espanhol ' : q.lingua === 'ING' ? 'inglês ' : ''}resolução`;
+  const termo = `ENEM ${q.ano} questão ${q.num} caderno azul ${q.lingua === 'ESP' ? 'espanhol ' : q.lingua === 'ING' ? 'inglês ' : ''}resolução`;
   return 'https://www.youtube.com/results?search_query=' + encodeURIComponent(termo);
 }
 function linkProva(q) {
@@ -385,10 +390,14 @@ function telaEstudar() {
     <div class="q-titulo"><h2>${tituloQ(q)}</h2>${controlesTamanho()}</div>
     <div class="questao-img">${imgsHTML(q)}</div>
     <p class="small muted">${linkProva(q) ? `<a href="${linkProva(q)}" target="_blank" rel="noopener">📄 Ver na prova original (pág. ${q.pag})</a> · ` : ''}<a href="#" data-acao="pular">${res ? '' : 'Pular esta questão'}</a></p>
+    <div id="dica"></div>
     <div id="feedback"></div>
     <div class="respostas"><div class="dentro">
-      <div class="alts">${'ABCDE'.split('').map(l => `<button class="alt" data-l="${l}">${l}</button>`).join('')}</div>
-      <div class="acoes" id="acoes"><button class="btn" id="btn-naosei">🤷 Não sei — ver resolução</button></div>
+      <div class="alts" role="radiogroup" aria-label="Alternativas">${'ABCDE'.split('').map(l => `<button class="alt" role="radio" aria-checked="false" data-l="${l}">${l}</button>`).join('')}</div>
+      <div class="acoes" id="acoes">
+        <button class="btn" id="btn-dica">💡 Ver como fazer</button>
+        <button class="btn primario" id="btn-conf">Escolha uma letra</button>
+      </div>
     </div></div>
   `;
   ligarTamanho();
@@ -405,7 +414,7 @@ function telaEstudar() {
     if (s.res[s.i]) return;
     clearInterval(timer);
     const seg = Math.round((Date.now() - inicio) / 1000);
-    const ok = registrar(q.id, item.tipo, letra, seg);
+    const ok = registrar(q.id, item.tipo, letra, seg, !!item.ajuda && letra !== '?');
     s.res[s.i] = { letra, ok, seg };
     salvar();
     mostrarFeedback();
@@ -426,8 +435,11 @@ function telaEstudar() {
     let estado = '';
     const foiChute = reg2.h[reg2.h.length - 1][4];
     const naoSei = rr.letra === '?';
+    const comAjuda = !!item.ajuda && !naoSei;
     if (naoSei) {
       estado = 'Sem problema — ela foi para o caderno de erros. Veja a resolução agora e tente sozinho amanhã.';
+    } else if (comAjuda) {
+      estado = 'Como você viu como fazer, ela volta amanhã para você refazer sozinho.';
     } else if (foiChute) {
       estado = 'Marcada como chute: vai para o caderno de erros e volta amanhã.';
     } else if (item.tipo === 'rev') {
@@ -438,9 +450,9 @@ function telaEstudar() {
     const fb = document.getElementById('feedback');
     fb.innerHTML = `
       <div class="feedback ${rr.ok ? 'ok' : naoSei ? 'neutro' : 'erro'}">
-        <h2>${rr.ok ? 'Acertou!' : naoSei ? `A resposta é ${q.resp}` : `Errou — a resposta é ${q.resp}`}${naoSei ? '' : lento}</h2>
+        <h2>${rr.ok ? (comAjuda ? 'Acertou, com ajuda' : 'Acertou!') : naoSei ? `A resposta é ${q.resp}` : `Errou — a resposta é ${q.resp}`}${naoSei ? '' : lento}</h2>
         ${estado ? `<p style="margin:0">${estado}</p>` : ''}
-        ${rr.ok && item.tipo !== 'pratica' ? `<label style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="chute" ${reg2.h[reg2.h.length - 1][4] ? 'checked' : ''}> Foi chute / não tinha certeza (mandar para revisão)</label>` : ''}
+        ${rr.ok && !comAjuda && item.tipo !== 'pratica' ? `<label style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="chute" ${reg2.h[reg2.h.length - 1][4] ? 'checked' : ''}> Foi chute / não tinha certeza (mandar para revisão)</label>` : ''}
       </div>
       <section class="card">
         <div class="linha-btns" style="margin-top:0">
@@ -461,6 +473,7 @@ function telaEstudar() {
       </section>` : ''}
     `;
     document.getElementById('acoes').innerHTML = `<button class="btn primario" id="btn-prox">${s.i + 1 < s.itens.length ? 'Próxima →' : 'Concluir'}</button>`;
+    document.getElementById('dica').innerHTML = '';
     document.getElementById('btn-prox').addEventListener('click', proxima);
     document.getElementById('chute')?.addEventListener('change', e => { marcarChute(q.id, e.target.checked); mostrarFeedback(); });
     document.getElementById('btn-exp').addEventListener('click', () => explicar(q, rr.letra, document.getElementById('exp')));
@@ -475,25 +488,47 @@ function telaEstudar() {
     if (explicacoes[q.id]) document.getElementById('exp').innerHTML = `<p>${md(explicacoes[q.id])}</p>`;
   }
 
+  let escolhida = null;
+  const btnConf = document.getElementById('btn-conf');
+  btnConf.classList.add('vazio');
   $app.querySelectorAll('.alt').forEach(b => b.addEventListener('click', () => {
     if (s.res[s.i]) return;
-    // dois toques: o primeiro seleciona, o segundo confirma (evita toque acidental no celular)
-    if (b.classList.contains('sel')) return responder(b.dataset.l);
-    $app.querySelectorAll('.alt').forEach(x => x.classList.remove('sel'));
-    b.classList.add('sel');
-    document.getElementById('acoes').innerHTML = `<button class="btn" id="btn-naosei">🤷 Não sei</button><button class="btn primario" id="btn-conf">Confirmar ${b.dataset.l}</button>`;
-    document.getElementById('btn-conf').addEventListener('click', () => responder(b.dataset.l));
-    ligarNaoSei();
+    // um toque seleciona; "Responder" (ou tocar de novo na mesma letra) confirma
+    if (escolhida === b.dataset.l) return responder(escolhida);
+    escolhida = b.dataset.l;
+    $app.querySelectorAll('.alt').forEach(x => { x.classList.toggle('sel', x === b); x.setAttribute('aria-checked', x === b); });
+    btnConf.textContent = `Responder ${escolhida}`;
+    btnConf.classList.remove('vazio');
   }));
-  function ligarNaoSei() {
-    document.getElementById('btn-naosei')?.addEventListener('click', () => {
-      $app.querySelectorAll('.alt').forEach(x => x.classList.remove('sel'));
+  btnConf.addEventListener('click', () => {
+    if (!escolhida) { btnConf.textContent = 'Toque numa letra primeiro'; return; }
+    responder(escolhida);
+  });
+  function mostrarDica() {
+    if (s.res[s.i]) return;
+    item.ajuda = true;
+    salvar();
+    const el = document.getElementById('dica');
+    el.innerHTML = `
+      <section class="card dica">
+        <h3>Como fazer</h3>
+        <div id="dica-txt" class="explicacao"></div>
+        <div class="linha-btns">
+          <a class="btn" href="${esc(linkVideo(q))}" target="_blank" rel="noopener">▶ Resolução no YouTube</a>
+          <button class="btn" id="btn-ver-resp">Ver a resposta</button>
+        </div>
+        <p class="small muted" style="margin-bottom:0">Você ainda pode responder. Como pediu ajuda, ela volta amanhã para você refazer sozinho.</p>
+      </section>`;
+    explicar(q, null, document.getElementById('dica-txt'), 'dica');
+    document.getElementById('btn-ver-resp').addEventListener('click', () => {
       responder('?');
       const r4 = reg(q.id);
       if (!r4.motivo) { r4.motivo = 'Não sabia o conteúdo'; salvar(); mostrarFeedback(); }
     });
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
-  ligarNaoSei();
+  document.getElementById('btn-dica').addEventListener('click', mostrarDica);
+  if (item.ajuda && !res) mostrarDica();
   $app.querySelector('[data-acao=pular]')?.addEventListener('click', e => {
     e.preventDefault();
     if (item.tipo === 'nova') { (st.q[q.id] ||= { h: [] }).pulou = hoje(); }
@@ -575,45 +610,46 @@ function verQuestao(id) {
 }
 
 // ---------- caderno de erros
-function telaErros(aba = 'hoje') {
+function telaErros() {
   const venc = vencidas();
   const todas = emRevisao().sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox));
-  const rec = POOL().filter(q => reg(q.id)?.s === 'rec');
-  const lista = aba === 'hoje' ? venc : aba === 'todas' ? todas : rec;
+  const rec = POOL().filter(q => reg(q.id)?.s === 'rec').length;
   const h = hoje();
-  const porMotivo = {};
-  todas.forEach(q => { const m = reg(q.id).motivo || 'Sem motivo'; porMotivo[m] = (porMotivo[m] || 0) + 1; });
-
+  const tam = st.cfg.bloco;
+  let msg;
+  if (venc.length) msg = `Você tem <b>${venc.length} ${venc.length === 1 ? 'questão' : 'questões'}</b> para refazer hoje.`;
+  else if (todas.length) {
+    const d = diffDias(h, reg(todas[0].id).prox);
+    msg = `Nada vence hoje. A próxima revisão é ${d === 1 ? 'amanhã' : `em ${dias(d)}`} — se quiser, adiante.`;
+  } else msg = 'Seu caderno de erros está vazio. Quando você errar ou pedir ajuda numa questão, ela aparece aqui.';
+  let semana = '<div class="semana">';
+  for (let k = 0; k < 7; k++) {
+    const d = somaDias(h, k);
+    const n = todas.filter(q => (k === 0 ? reg(q.id).prox <= d : reg(q.id).prox === d)).length;
+    semana += `<div class="${k === 0 ? 'hoje' : ''}">${k === 0 ? 'Hoje' : DIAS_SEMANA[diaSemana(d)]}<b>${n || '·'}</b></div>`;
+  }
+  semana += '</div>';
+  const n1 = Math.min(venc.length, tam);
   $app.innerHTML = `
     <h1>Caderno de erros</h1>
-    <p class="muted">Toda questão que você erra (ou acerta no chute) vem pra cá e volta em 1, 3, 7 e 21 dias. Acertou 4 revisões seguidas → recuperada.</p>
-    <div class="linha-btns">
-      <button class="btn primario" data-acao="rev" ${venc.length ? '' : 'disabled'}>Revisar agora (${venc.length})</button>
-    </div>
-    <div class="linha-btns">
-      <a class="btn ${aba === 'hoje' ? 'primario' : ''}" href="#/erros/hoje">Para hoje (${venc.length})</a>
-      <a class="btn ${aba === 'todas' ? 'primario' : ''}" href="#/erros/todas">Em revisão (${todas.length})</a>
-      <a class="btn ${aba === 'rec' ? 'primario' : ''}" href="#/erros/rec">Recuperadas (${rec.length})</a>
-    </div>
-    ${Object.keys(porMotivo).length && aba !== 'rec' ? `<p class="small muted" style="margin-top:12px">Motivos: ${Object.entries(porMotivo).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${esc(m)} (${n})`).join(' · ')}</p>` : ''}
+    <p class="muted">${todas.length} em revisão · ${rec} recuperadas</p>
+    <section class="card destaque">
+      <h2>Refazer agora</h2>
+      <p>${msg}</p>
+      ${todas.length ? `
+      <div class="linha-btns">
+        <button class="btn primario grande" data-acao="bloco">${venc.length ? `Refazer ${n1} ${n1 === 1 ? 'questão' : 'questões'}` : `Adiantar ${Math.min(todas.length, tam)} revisões`}</button>
+      </div>
+      <div class="linha-btns"><button class="btn" data-acao="rapido">⚡ Só 5 rapidinhas</button></div>
+      <p class="small muted" style="margin-bottom:0">Acertou → volta em 3, 7 e 21 dias. Acertou 4 vezes seguidas → sai do caderno.</p>` : ''}
+    </section>
     <section class="card">
-      ${lista.length ? `<ul class="lista">${lista.slice(0, 300).map(q => {
-        const r = reg(q.id);
-        const quando = r.s === 'rec' ? 'recuperada' : r.prox <= h ? '<b style="color:var(--erro)">revisar hoje</b>' : `em ${dias(diffDias(h, r.prox))}`;
-        return `<li>
-          <div><div class="tit">${tituloQ(q)}</div>
-            <div class="small muted">${chipArea(q.area)} ${r.s === 'rev' ? `caixa ${r.caixa}/${CAIXA_MAX} · ` : ''}${quando}${r.motivo ? ` · ${esc(r.motivo)}` : ''}</div>
-            ${r.nota ? `<div class="small">${esc(r.nota)}</div>` : ''}</div>
-          <div style="display:flex;gap:6px">
-            <button class="btn" data-ver="${q.id}">Ver</button>
-            ${r.s === 'rev' ? `<button class="btn" data-fazer="${q.id}">Refazer</button>` : ''}
-          </div></li>`;
-      }).join('')}</ul>` : `<div class="vazio">${aba === 'hoje' ? 'Nada para revisar hoje. 👌' : 'Nada aqui ainda.'}</div>`}
+      <h2>Próximos dias</h2>
+      ${semana}
     </section>
   `;
-  $app.querySelector('[data-acao=rev]').addEventListener('click', () => iniciar(venc.length, 'rev'));
-  $app.querySelectorAll('[data-ver]').forEach(b => b.addEventListener('click', () => { location.hash = '#/ver/' + b.dataset.ver; }));
-  $app.querySelectorAll('[data-fazer]').forEach(b => b.addEventListener('click', () => abrirQuestaoAvulsa(b.dataset.fazer)));
+  $app.querySelector('[data-acao=bloco]')?.addEventListener('click', () => iniciar(tam, 'rev'));
+  $app.querySelector('[data-acao=rapido]')?.addEventListener('click', () => iniciar(5, 'rev'));
 }
 
 // ---------- progresso
@@ -822,10 +858,11 @@ async function imagemBase64(src) {
 }
 
 let explicando = false;
-async function explicar(q, marcada, el) {
-  if (explicacoes[q.id]) { el.innerHTML = `<p>${md(explicacoes[q.id])}</p>`; return; }
+async function explicar(q, marcada, el, modo = 'porque') {
+  const chave = modo === 'dica' ? `${q.id}:dica` : q.id;
+  if (explicacoes[chave]) { el.innerHTML = `<p>${md(explicacoes[chave])}</p>`; return; }
   if (!st.cfg.apiKey) {
-    el.innerHTML = `<p class="aviso">Para ver a explicação, coloque sua chave da API da Anthropic em <a href="#/ajustes">Ajustes</a>. Enquanto isso, o vídeo do YouTube resolve!</p>`;
+    el.innerHTML = `<p class="aviso">Para ver a explicação escrita, coloque sua chave da API da Anthropic em <a href="#/ajustes">Ajustes</a>. Enquanto isso, o vídeo do YouTube resolve!</p>`;
     return;
   }
   if (location.protocol === 'file:') {
@@ -840,8 +877,13 @@ async function explicar(q, marcada, el) {
     ({ default: Anthropic } = await import(SDK_URL));
     const client = new Anthropic({ apiKey: st.cfg.apiKey, dangerouslyAllowBrowser: true });
     const imgs = await Promise.all(q.imgs.map(imagemBase64));
-    const errou = marcada && marcada !== q.resp;
-    const pedido = [
+    const errou = marcada && marcada !== q.resp && marcada !== '?';
+    const pedido = modo === 'dica' ? [
+      `Questão ${q.num} do ENEM ${q.ano} (caderno azul, área de ${AREAS[q.area]}). Para sua referência, o gabarito oficial é ${q.resp}, mas o estudante AINDA NÃO respondeu.`,
+      'Em no máximo 130 palavras, mostre o caminho para resolver: o que a questão pede, o conceito ou a fórmula que resolve e os passos do raciocínio.',
+      'NÃO diga qual alternativa é a correta, não cite a letra, não faça a conta até o valor final e não elimine alternativas até sobrar uma. Pare um passo antes da resposta.',
+      'Use **negrito** só em termos importantes. Sem títulos, sem repetir o enunciado.',
+    ].join('\n') : [
       `Questão ${q.num} do ENEM ${q.ano} (caderno azul, área de ${AREAS[q.area]}). O gabarito oficial é a alternativa ${q.resp}.`,
       errou ? `O estudante marcou ${marcada}.` : '',
       'Em no máximo 130 palavras, para um estudante que vai revisar essa questão:',
@@ -860,7 +902,7 @@ async function explicar(q, marcada, el) {
       messages: [{
         role: 'user',
         content: [
-          ...imgs.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } })),
+          ...imgs.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/webp', data } })),
           { type: 'text', text: pedido },
         ],
       }],
@@ -873,7 +915,7 @@ async function explicar(q, marcada, el) {
       return;
     }
     texto = final.content.filter(b => b.type === 'text').map(b => b.text).join('');
-    explicacoes[q.id] = texto;
+    explicacoes[chave] = texto;
     salvarExplicacoes();
     el.innerHTML = `<p>${md(texto)}</p>`;
   } catch (err) {
@@ -902,7 +944,7 @@ function rota() {
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('ativo',
     a.dataset.nav === (pagina || 'inicio')));
   if (pagina === 'estudar') telaEstudar();
-  else if (pagina === 'erros') telaErros(arg || 'hoje');
+  else if (pagina === 'erros') telaErros();
   else if (pagina === 'progresso') telaProgresso();
   else if (pagina === 'ajustes') telaAjustes();
   else if (pagina === 'logica') telaLogica();

@@ -1512,7 +1512,13 @@ function telaAjustes() {
       ${x.modelo ? `<label class="campo" for="ia-modelo">Modelo</label>
         <select id="ia-modelo"><option value="${esc(c[x.modelo] || '')}">${esc(c[x.modelo] || 'coloque a chave para ver os modelos')}</option></select>
         <p class="small muted" id="ia-status" style="margin:4px 0 0"></p>`
-      : `<p class="small muted" style="margin:6px 0 0">Modelo: ${MODELO}.</p>`}`;
+      : `<p class="small muted" style="margin:6px 0 0">Modelo: ${MODELO}.</p>`}
+      <div class="linha-btns"><button class="btn mini" type="button" id="ia-testar">Testar a IA</button></div>
+      <div id="ia-teste" class="explicacao" style="margin-top:8px"></div>`;
+    g('ia-testar').addEventListener('click', () => {
+      if (!c[x.chave]) { g('ia-teste').innerHTML = '<p class="aviso">Coloque a chave primeiro.</p>'; return; }
+      testarIA(g('ia-teste'));
+    });
     g('ia-chave').addEventListener('change', e => { c[x.chave] = e.target.value.trim(); salvar(); if (x.modelo) carregarModelos(); });
     g('ia-modelo')?.addEventListener('change', e => { c[x.modelo] = e.target.value; salvar(); });
     if (x.modelo && c[x.chave]) carregarModelos();
@@ -1671,13 +1677,76 @@ function modeloPadrao(ia, lista) {
   for (const re of pref) { const m = lista.find(x => re.test(x)); if (m) return m; }
   return lista[0];
 }
-async function gerarTextoIA(ia, sistema, pedido, imgs) {
+// lê uma resposta em streaming (Server-Sent Events): chama onDados com cada "data: {...}"
+async function lerSSE(r, onDados) {
+  const leitor = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await leitor.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const linha = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!linha.startsWith('data:')) continue;
+      const d = linha.slice(5).trim();
+      if (!d || d === '[DONE]') continue;
+      let j;
+      try { j = JSON.parse(d); } catch { continue; }
+      onDados(j);
+    }
+  }
+}
+function modeloIA(ia) { return ia === 'anthropic' ? MODELO : st.cfg[IAS[ia].modelo] || ''; }
+// Chama a IA escolhida. ctx: { signal, etapa(txt), texto(parcial) }. Devolve o texto, ou null se a IA se recusou.
+async function chamarIA(ia, sistema, pedido, imgs, ctx) {
   const x = IAS[ia], chave = st.cfg[x.chave];
+  if (ia === 'anthropic') {
+    ctx.etapa('Carregando a biblioteca da Anthropic');
+    let Anthropic;
+    try { ({ default: Anthropic } = await import(SDK_URL)); } catch { const e = new Error('não consegui baixar a biblioteca da Anthropic (sem internet?)'); throw e; }
+    const client = new Anthropic({ apiKey: chave, dangerouslyAllowBrowser: true });
+    ctx.etapa('Enviando para o Claude');
+    let texto = '';
+    try {
+      const stream = client.beta.messages.stream({
+        model: MODELO,
+        max_tokens: 8000,
+        output_config: { effort: 'medium' },
+        betas: ['server-side-fallback-2026-07-01'],
+        fallbacks: 'default',
+        system: sistema,
+        messages: [{ role: 'user', content: [...imgs.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/webp', data } })), { type: 'text', text: pedido }] }],
+      }, { signal: ctx.signal });
+      stream.on('connect', () => ctx.etapa('O Claude está pensando'));
+      stream.on('text', t => { texto += t; ctx.texto(texto); });
+      const final = await stream.finalMessage();
+      if (final.stop_reason === 'refusal') return null;
+      return final.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    } catch (err) {
+      if (Anthropic.APIError && err instanceof Anthropic.APIError && !(Anthropic.APIUserAbortError && err instanceof Anthropic.APIUserAbortError)) {
+        const e = new Error(err.error?.error?.message || err.message);
+        e.status = err.status;
+        throw e;
+      }
+      throw err;
+    }
+  }
   let modelo = st.cfg[x.modelo];
-  if (!modelo) { modelo = modeloPadrao(ia, await listarModelos(ia, chave)); st.cfg[x.modelo] = modelo; salvar(); }
+  if (!modelo) {
+    ctx.etapa('Escolhendo o modelo');
+    modelo = modeloPadrao(ia, await listarModelos(ia, chave));
+    if (!modelo) throw new Error('nenhum modelo disponível para essa chave');
+    st.cfg[x.modelo] = modelo; salvar();
+  }
+  ctx.etapa(`Enviando para ${x.nome.split(' ')[0]}`);
+  let texto = '', motivo = '', recusa = false;
   if (ia === 'google') {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`, {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:streamGenerateContent?alt=sse`, {
       method: 'POST',
+      signal: ctx.signal,
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chave },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: sistema }] },
@@ -1686,27 +1755,51 @@ async function gerarTextoIA(ia, sistema, pedido, imgs) {
       }),
     });
     if (!r.ok) throw await erroHTTP(r);
-    const j = await r.json();
-    const c0 = j.candidates?.[0];
-    if (!c0 || ['SAFETY', 'RECITATION', 'PROHIBITED_CONTENT', 'BLOCKLIST'].includes(c0.finishReason)) return null;
-    return (c0.content?.parts || []).filter(p => p.text && !p.thought).map(p => p.text).join('');
+    ctx.etapa('O Gemini está pensando');
+    await lerSSE(r, j => {
+      if (j.error) { const e = new Error(j.error.message || 'erro no meio da resposta'); e.status = j.error.code; throw e; }
+      if (j.promptFeedback?.blockReason) { recusa = true; motivo = j.promptFeedback.blockReason; }
+      const c0 = j.candidates?.[0];
+      if (!c0) return;
+      if (c0.finishReason) motivo = c0.finishReason;
+      const novo = (c0.content?.parts || []).filter(p => p.text && !p.thought).map(p => p.text).join('');
+      if (novo) { texto += novo; ctx.texto(texto); }
+    });
+    if (!texto && ['SAFETY', 'RECITATION', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'OTHER'].includes(motivo)) recusa = true;
+    if (!texto && motivo === 'MAX_TOKENS') throw new Error('o modelo gastou o limite pensando e não escreveu nada — escolha um modelo "flash" em Ajustes');
+  } else {
+    const raciocina = /^(gpt-5|o\d)/.test(modelo);
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      signal: ctx.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${chave}` },
+      body: JSON.stringify({
+        model: modelo,
+        stream: true,
+        max_completion_tokens: 8000,
+        ...(raciocina ? { reasoning_effort: 'low' } : {}),
+        messages: [
+          { role: 'system', content: sistema },
+          { role: 'user', content: [...imgs.map(data => ({ type: 'image_url', image_url: { url: `data:image/webp;base64,${data}` } })), { type: 'text', text: pedido }] },
+        ],
+      }),
+    });
+    if (!r.ok) throw await erroHTTP(r);
+    ctx.etapa('O ChatGPT está pensando');
+    await lerSSE(r, j => {
+      if (j.error) { const e = new Error(j.error.message || 'erro no meio da resposta'); throw e; }
+      const c0 = j.choices?.[0];
+      if (!c0) return;
+      if (c0.delta?.refusal) recusa = true;
+      if (c0.finish_reason) motivo = c0.finish_reason;
+      if (c0.delta?.content) { texto += c0.delta.content; ctx.texto(texto); }
+    });
+    if (!texto && motivo === 'content_filter') recusa = true;
+    if (!texto && motivo === 'length') throw new Error('o modelo gastou o limite pensando e não escreveu nada — escolha um modelo "mini" em Ajustes');
   }
-  const r = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${chave}` },
-    body: JSON.stringify({
-      model: modelo,
-      max_completion_tokens: 8000,
-      messages: [
-        { role: 'system', content: sistema },
-        { role: 'user', content: [...imgs.map(data => ({ type: 'image_url', image_url: { url: `data:image/webp;base64,${data}` } })), { type: 'text', text: pedido }] },
-      ],
-    }),
-  });
-  if (!r.ok) throw await erroHTTP(r);
-  const j = await r.json();
-  const m = j.choices?.[0]?.message;
-  return m?.refusal ? null : (m?.content || '');
+  if (recusa && !texto) return null;
+  if (!texto) throw new Error(`a IA terminou sem escrever nada${motivo ? ` (motivo: ${motivo})` : ''}`);
+  return texto;
 }
 async function imagemBase64(src) {
   const blob = await (await fetch(src)).blob();
@@ -1718,11 +1811,78 @@ async function imagemBase64(src) {
   });
 }
 
-let explicando = false;
+// Mostra o andamento (etapa + segundos + Cancelar), o texto chegando e, se der errado, o que aconteceu.
+const LIMITE_IA = 120;   // segundos
+const SISTEMA_IA = 'Você é um professor experiente de cursinho pré-ENEM. Responde em português do Brasil, de forma curta, clara e correta. Confie no gabarito oficial informado.';
+const pedidosIA = new Map();   // chave da explicação -> AbortController
+async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo }) {
+  const ia = iaAtual();
+  const nome = IAS[ia].nome;
+  const ctrl = new AbortController();
+  const t0 = Date.now();
+  let etapa = 'Preparando a imagem da questão', texto = '', motivoAbort = '';
+  el.innerHTML = `<div class="ia-andamento"><span class="ia-etapa"></span> <button class="btn mini" type="button">Cancelar</button></div><div class="ia-texto"></div>`;
+  const elEtapa = el.querySelector('.ia-etapa'), elTexto = el.querySelector('.ia-texto');
+  const seg = () => Math.round((Date.now() - t0) / 1000);
+  const pinta = () => { if (elEtapa.isConnected) elEtapa.textContent = `${etapa}… ${seg()} s`; };
+  pinta();
+  const relogio = setInterval(() => {
+    pinta();
+    if (seg() >= LIMITE_IA) { motivoAbort = 'tempo'; ctrl.abort(); }
+  }, 1000);
+  el.querySelector('.ia-andamento .btn').addEventListener('click', () => { motivoAbort = 'cancelado'; ctrl.abort(); });
+  const ctx = {
+    signal: ctrl.signal,
+    etapa: t => { etapa = t; pinta(); },
+    texto: t => { texto = t; etapa = 'Escrevendo'; pinta(); if (elTexto.isConnected) elTexto.innerHTML = `<p>${md(t)}</p>`; },
+  };
+  try {
+    const imgs = await imgsDe();
+    const final = await chamarIA(ia, sistema, pedido, imgs, ctx);
+    clearInterval(relogio);
+    if (final === null) { el.innerHTML = `<p class="aviso">${esc(nome)} preferiu não responder essa questão. Tente o vídeo do YouTube ou outra IA em Ajustes.</p>`; return null; }
+    el.innerHTML = `<p>${md(final)}</p>`;
+    aoTerminar?.(final);
+    return final;
+  } catch (err) {
+    clearInterval(relogio);
+    if (motivoAbort === 'cancelado') { el.innerHTML = '<p class="small muted">Cancelado. <button class="btn mini" type="button" data-de-novo>Tentar de novo</button></p>'; el.querySelector('[data-de-novo]').addEventListener('click', tentarDeNovo); return null; }
+    const cod = err.status;
+    let msg;
+    if (motivoAbort === 'tempo') msg = `${nome} não respondeu em ${LIMITE_IA} s. Tente de novo ou escolha um modelo mais rápido (“flash” ou “mini”) em Ajustes.`;
+    else if (cod === 401 || cod === 403 || (cod === 400 && /api.?key/i.test(err.message))) msg = `A chave do ${nome} foi recusada. Confira em Ajustes.`;
+    else if (cod === 429) msg = 'Limite da sua chave atingido (muitas requisições seguidas ou sem crédito). Tente de novo daqui a pouco.';
+    else if (cod === 404) msg = `O modelo “${modeloIA(ia)}” não foi encontrado para a sua chave. Escolha outro em Ajustes.`;
+    else if (cod >= 500) msg = `O servidor do ${nome} falhou agora. Tente de novo em alguns segundos.`;
+    else if (err instanceof TypeError && !cod) msg = 'Não consegui falar com o servidor da IA (sem internet ou bloqueado pela rede).';
+    else msg = 'Não consegui gerar a explicação.';
+    // detalhes para corrigir — nunca inclui a chave
+    const detalhes = [
+      `Quando: ${new Date().toLocaleString('pt-BR')}`,
+      `IA: ${nome}`,
+      `Modelo: ${modeloIA(ia) || '(não escolhido)'}`,
+      `Parou em: ${etapa} (${seg()} s)`,
+      cod ? `Código HTTP: ${cod}` : '',
+      `Mensagem: ${motivoAbort === 'tempo' ? `sem resposta em ${LIMITE_IA} s` : (err.message || String(err))}`,
+      texto ? `Texto recebido até parar: ${texto.length} caracteres` : 'Nenhum texto chegou',
+      `Navegador: ${navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 120)}`,
+    ].filter(Boolean).join('\n');
+    // sem espaços entre as tags: a área da explicação preserva quebras de linha
+    el.innerHTML = `<div class="aviso"><p style="margin:0 0 6px"><b>${esc(msg)}</b></p>`
+      + `<pre class="ia-detalhes">${esc(detalhes)}</pre>`
+      + '<div class="linha-btns" style="margin-top:6px"><button class="btn mini" type="button" data-de-novo>Tentar de novo</button><button class="btn mini" type="button" data-copiar>Copiar detalhes</button></div></div>'
+      + (texto ? `<div class="ia-texto"><p>${md(texto)}</p></div>` : '');
+    el.querySelector('[data-de-novo]').addEventListener('click', tentarDeNovo);
+    el.querySelector('[data-copiar]').addEventListener('click', e => {
+      navigator.clipboard?.writeText(detalhes).then(() => { e.target.textContent = 'Copiado ✓'; }, () => { e.target.textContent = 'Selecione o texto acima'; });
+    });
+    return null;
+  }
+}
+
 async function explicar(q, marcada, el, modo = 'porque') {
   const chave = modo === 'dica' ? `${q.id}:dica` : q.id;
   if (explicacoes[chave]) { el.innerHTML = `<p>${md(explicacoes[chave])}</p>`; return; }
-  const ia = iaAtual();
   if (!chaveIA()) {
     el.innerHTML = `<p class="aviso">Para ver a explicação escrita, escolha a IA e coloque sua chave de API em <a href="#/ajustes">Ajustes</a> (Claude, Gemini ou ChatGPT). Enquanto isso, o vídeo do YouTube resolve!</p>`;
     return;
@@ -1731,81 +1891,44 @@ async function explicar(q, marcada, el, modo = 'porque') {
     el.innerHTML = `<p class="aviso">Abra o app pelo <b>INICIAR.bat</b> (servidor local) para usar as explicações.</p>`;
     return;
   }
-  if (explicando) return;
-  explicando = true;
-  el.innerHTML = '<p class="muted">Pensando na explicação…</p>';
-  let Anthropic;
-  const SISTEMA = 'Você é um professor experiente de cursinho pré-ENEM. Responde em português do Brasil, de forma curta, clara e correta. Confie no gabarito oficial informado.';
+  // a mesma explicação já está sendo gerada (clique duplo): não pede de novo
+  if (pedidosIA.has(chave) && el.querySelector('.ia-andamento')) return;
+  const errou = marcada && marcada !== q.resp && marcada !== '?';
+  const pedido = modo === 'dica' ? [
+    `Questão ${q.num} do ENEM ${q.ano} (caderno azul, área de ${AREAS[q.area]}). Para sua referência, o gabarito oficial é ${q.resp}, mas o estudante AINDA NÃO respondeu.`,
+    'Em no máximo 130 palavras, mostre o caminho para resolver: o que a questão pede, o conceito ou a fórmula que resolve e os passos do raciocínio.',
+    'NÃO diga qual alternativa é a correta, não cite a letra, não faça a conta até o valor final e não elimine alternativas até sobrar uma. Pare um passo antes da resposta.',
+    'Use **negrito** só em termos importantes. Sem títulos, sem repetir o enunciado.',
+  ].join('\n') : [
+    `Questão ${q.num} do ENEM ${q.ano} (caderno azul, área de ${AREAS[q.area]}). O gabarito oficial é a alternativa ${q.resp}.`,
+    errou ? `O estudante marcou ${marcada}.` : '',
+    'Em no máximo 130 palavras, para um estudante que vai revisar essa questão:',
+    `1. Explique por que a alternativa ${q.resp} está correta (o raciocínio ou a conta essencial).`,
+    errou ? `2. Explique por que a ${marcada} está errada — qual a confusão ou pegadinha.` : '2. Aponte a pegadinha principal entre as outras alternativas.',
+    '3. Termine com uma linha "Conceito-chave: ..." com o assunto que ele deve revisar.',
+    'Use **negrito** só em termos importantes. Sem títulos, sem repetir o enunciado.',
+  ].filter(Boolean).join('\n');
+  pedidosIA.set(chave, true);
   try {
-    const imgs = await Promise.all(q.imgs.map(imagemBase64));
-    const errou = marcada && marcada !== q.resp && marcada !== '?';
-    const pedido = modo === 'dica' ? [
-      `Questão ${q.num} do ENEM ${q.ano} (caderno azul, área de ${AREAS[q.area]}). Para sua referência, o gabarito oficial é ${q.resp}, mas o estudante AINDA NÃO respondeu.`,
-      'Em no máximo 130 palavras, mostre o caminho para resolver: o que a questão pede, o conceito ou a fórmula que resolve e os passos do raciocínio.',
-      'NÃO diga qual alternativa é a correta, não cite a letra, não faça a conta até o valor final e não elimine alternativas até sobrar uma. Pare um passo antes da resposta.',
-      'Use **negrito** só em termos importantes. Sem títulos, sem repetir o enunciado.',
-    ].join('\n') : [
-      `Questão ${q.num} do ENEM ${q.ano} (caderno azul, área de ${AREAS[q.area]}). O gabarito oficial é a alternativa ${q.resp}.`,
-      errou ? `O estudante marcou ${marcada}.` : '',
-      'Em no máximo 130 palavras, para um estudante que vai revisar essa questão:',
-      `1. Explique por que a alternativa ${q.resp} está correta (o raciocínio ou a conta essencial).`,
-      errou ? `2. Explique por que a ${marcada} está errada — qual a confusão ou pegadinha.` : '2. Aponte a pegadinha principal entre as outras alternativas.',
-      '3. Termine com uma linha "Conceito-chave: ..." com o assunto que ele deve revisar.',
-      'Use **negrito** só em termos importantes. Sem títulos, sem repetir o enunciado.',
-    ].filter(Boolean).join('\n');
-    if (ia !== 'anthropic') {
-      const texto = await gerarTextoIA(ia, SISTEMA, pedido, imgs);
-      if (!texto) { el.innerHTML = '<p class="aviso">A IA não respondeu essa. Tente o vídeo do YouTube.</p>'; return; }
-      explicacoes[chave] = texto;
-      salvarExplicacoes();
-      el.innerHTML = `<p>${md(texto)}</p>`;
-      return;
-    }
-    ({ default: Anthropic } = await import(SDK_URL));
-    const client = new Anthropic({ apiKey: st.cfg.apiKey, dangerouslyAllowBrowser: true });
-    const stream = client.beta.messages.stream({
-      model: MODELO,
-      max_tokens: 8000,
-      output_config: { effort: 'medium' },
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      system: SISTEMA,
-      messages: [{
-        role: 'user',
-        content: [
-          ...imgs.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/webp', data } })),
-          { type: 'text', text: pedido },
-        ],
-      }],
+    await rodarIA(el, {
+      sistema: SISTEMA_IA,
+      pedido,
+      imgsDe: () => Promise.all(q.imgs.map(imagemBase64)),
+      aoTerminar: texto => { explicacoes[chave] = texto; salvarExplicacoes(); },
+      tentarDeNovo: () => explicar(q, marcada, el, modo),
     });
-    let texto = '';
-    stream.on('text', t => { texto += t; el.innerHTML = `<p>${md(texto)}</p>`; });
-    const final = await stream.finalMessage();
-    if (final.stop_reason === 'refusal') {
-      el.innerHTML = '<p class="aviso">O modelo não respondeu essa. Tente o vídeo do YouTube.</p>';
-      return;
-    }
-    texto = final.content.filter(b => b.type === 'text').map(b => b.text).join('');
-    explicacoes[chave] = texto;
-    salvarExplicacoes();
-    el.innerHTML = `<p>${md(texto)}</p>`;
-  } catch (err) {
-    let msg = 'Não consegui gerar a explicação agora.';
-    if (ia !== 'anthropic') {
-      const cod = err.status;
-      if (cod === 401 || cod === 403 || (cod === 400 && /api.?key/i.test(err.message))) msg = `Chave do ${IAS[ia].nome} inválida. Confira em Ajustes.`;
-      else if (cod === 429) msg = 'Limite da sua chave atingido (muitas requisições ou sem crédito). Tente de novo daqui a pouco.';
-      else if (cod) msg += ` (${cod} ${esc(err.message)})`;
-      else msg = 'Sem conexão com a internet.';
-    } else if (Anthropic && err instanceof Anthropic.AuthenticationError) msg = 'Chave da API inválida. Confira em Ajustes.';
-    else if (Anthropic && err instanceof Anthropic.RateLimitError) msg = 'Muitas requisições seguidas — tente de novo em alguns segundos.';
-    else if (Anthropic && err instanceof Anthropic.APIConnectionError) msg = 'Sem conexão com a internet.';
-    else if (Anthropic && err instanceof Anthropic.APIError) msg += ` (${err.status ?? ''} ${esc(err.message)})`;
-    else if (!Anthropic) msg = 'Não consegui carregar a biblioteca (sem internet?).';
-    el.innerHTML = `<p class="aviso">${msg}</p>`;
   } finally {
-    explicando = false;
+    pedidosIA.delete(chave);
   }
+}
+// botão "Testar" em Ajustes: um pedido curto, sem imagem, com o mesmo relatório de erro
+function testarIA(el) {
+  return rodarIA(el, {
+    sistema: 'Responda em português do Brasil.',
+    pedido: 'Responda apenas: "Funcionando! Pode usar nas explicações."',
+    imgsDe: async () => [],
+    tentarDeNovo: () => testarIA(el),
+  });
 }
 
 // ---------------------------------------------------------------- rotas

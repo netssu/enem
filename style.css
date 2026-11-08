@@ -318,3 +318,9 @@ input[type=number] { padding: 8px 10px; border-radius: 10px; border: 1px solid v
 .barrinha > i { display: block; height: 100%; background: var(--azul); }
 @media (max-width: 420px) { .tabela-dias { font-size: 13px; } .barrinha { width: 22px; } }
 #btn-ant { font-size: 20px; padding: 0 12px; }
+
+/* ---------- andamento e erros da IA ---------- */
+.ia-andamento { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 14px; margin-bottom: 6px; }
+.ia-etapa::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; border: 2px solid var(--azul); border-right-color: transparent; animation: gira .8s linear infinite; vertical-align: -1px; }
+@keyframes gira { to { transform: rotate(360deg); } }
+.ia-detalhes { white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, Consolas, monospace; background: var(--bg); color: var(--text); border-radius: 8px; padding: 8px 10px; margin: 0; max-height: 220px; overflow: auto; }

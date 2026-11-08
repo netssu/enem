@@ -1,0 +1,4 @@
+__pycache__/
+tools/_out/
+tools/*_log.txt
+.claude/

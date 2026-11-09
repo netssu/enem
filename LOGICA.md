@@ -37,11 +37,13 @@ Estratégia: **fazer todas as questões do ENEM (provas azuis 2010–2025) uma v
 - Se der errado, a caixa mostra o motivo em português (chave recusada, limite de uso, modelo inexistente, servidor fora, sem conexão) e os **detalhes**: IA, modelo, onde parou, código HTTP, mensagem da API e navegador — nunca a chave. **Copiar detalhes** copia esse texto; **Tentar de novo** repete.
 - Em **Ajustes › Testar a IA** dá para conferir a chave com um pedido curto, sem gastar uma explicação.
 
-## Bloco de questões × correção de erros
+## Blocos (um tipo por bloco)
 
-- São dois andamentos separados: o **bloco de questões** (começado no Início: novas + revisões do dia) e a **correção** (começada em Erros, em "Só revisões" ou em "Treinar" um tema). Começar um guarda o outro onde parou.
-- No Início, **Continuar bloco** volta sempre para o bloco de questões; se houver correção no meio, aparece também **↺ Continuar correção**. Na aba Erros, **Continuar correção** aparece no topo.
-- "Sair" leva de volta para onde o bloco começou (Início ou Erros). No fim de um, o app oferece continuar o outro.
+- Cada bloco tem **um tipo só**, e cada tipo guarda o seu andamento: **novas** (só questões nunca feitas — o "Questões novas" do cronograma), **revisões** (só o caderno de erros: as vencidas; sem vencidas, adianta as próximas), **misto** (novas + revisões vencidas — o bloco livre da aba Questões), **tema** e **área** (treinos). Começar um guarda os outros onde pararam; começar outro do mesmo tipo substitui o guardado.
+- O botão de cada lugar só continua o bloco do seu tipo: "Questões novas" no cronograma nunca abre um bloco com revisões.
+- **Conferência antes de cada questão:** sai do bloco a questão nova que já foi respondida em outro lugar, a revisão que já foi feita hoje ou que saiu do caderno, e qualquer repetição. Vale também para blocos guardados há dias.
+- Questão respondida hoje não volta hoje: nem nas revisões adiantadas, nem nos treinos, nem nos simulados de questões já feitas.
+- "Sair" e "Voltar" levam para onde o bloco começou. No fim de um bloco, o app oferece continuar outro que esteja guardado.
 
 ## Voltar para a questão anterior
 

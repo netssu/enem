@@ -41,6 +41,7 @@ Estratégia: **fazer todas as questões do ENEM (provas azuis 2010–2025) uma v
 
 - Cada bloco tem **um tipo só**, e cada tipo guarda o seu andamento: **novas** (só questões nunca feitas — o "Questões novas" do cronograma), **revisões** (só o caderno de erros: as vencidas; sem vencidas, adianta as próximas), **misto** (novas + revisões vencidas — o bloco livre da aba Questões), **tema** e **área** (treinos). Começar um guarda os outros onde pararam; começar outro do mesmo tipo substitui o guardado.
 - O botão de cada lugar só continua o bloco do seu tipo: "Questões novas" no cronograma nunca abre um bloco com revisões.
+- O bloco de **questões novas** do cronograma nunca passa da meta de hoje: ele encolhe sozinho para o que falta (faltando 1, sobra 1). Batida a meta, o fim do bloco e o cronograma oferecem **extras**, que são um bloco separado, sem limite.
 - **Conferência antes de cada questão:** sai do bloco a questão nova que já foi respondida em outro lugar, a revisão que já foi feita hoje ou que saiu do caderno, e qualquer repetição. Vale também para blocos guardados há dias.
 - Questão respondida hoje não volta hoje: nem nas revisões adiantadas, nem nos treinos, nem nos simulados de questões já feitas.
 - "Sair" e "Voltar" levam para onde o bloco começou. No fim de um bloco, o app oferece continuar outro que esteja guardado.

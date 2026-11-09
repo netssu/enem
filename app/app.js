@@ -776,7 +776,8 @@ function iniciar(tam, tipo, tema) {
     alert(tipo === 'rev' ? 'Nenhuma revisão pendente agora.' : tipo === 'tema' ? 'Você já fez todas as questões desse tema!' : 'Não há questões disponíveis com os filtros atuais. Confira as áreas em Ajustes.');
     return;
   }
-  location.hash = '#/estudar';
+  // na tela de fim de bloco o hash já é #/estudar: sem hashchange, é preciso redesenhar à mão
+  if (location.hash === '#/estudar') rota(); else location.hash = '#/estudar';
 }
 
 // ---------- tela de questão
@@ -841,6 +842,16 @@ function telaEstudar() {
     s.res[s.i] = { letra, ok, seg };
     salvar();
     mostrarFeedback();
+    // com uma imagem grande o resultado fica fora da tela: desce até ele (descontando o cabeçalho fixo)
+    const fbEl = document.querySelector('#feedback .feedback');
+    if (fbEl) {
+      const topo = document.querySelector('.topo')?.offsetHeight || 0;
+      const y = Math.max(0, fbEl.getBoundingClientRect().top + window.scrollY - topo - 12);
+      const de = window.scrollY;
+      window.scrollTo({ top: y, behavior: 'smooth' });
+      // alguns navegadores ignoram a rolagem suave: se nada se mexeu, pula direto
+      setTimeout(() => { if (window.scrollY === de && Math.abs(y - de) > 4) window.scrollTo(0, y); }, 400);
+    }
   };
   const proxima = () => { s.i++; salvar(); window.scrollTo(0, 0); rota(); };
   const voltar = () => { if (s.avulsa || s.i <= 0) return; s.i--; salvar(); window.scrollTo(0, 0); rota(); };

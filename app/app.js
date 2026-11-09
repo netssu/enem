@@ -43,6 +43,7 @@ function padrao() {
       ordem: 'intercalado',
       areas: [...ORDEM_AREAS],
       foco: true,   // reforçar pontos fracos nos blocos
+      redacao: true,   // dias de redação no cronograma
       apiKey: '',          // chave da Anthropic (Claude)
       ia: 'anthropic',     // qual IA explica: anthropic | google | openai
       chaveGoogle: '', modeloGoogle: '',
@@ -149,22 +150,7 @@ function plano() {
   const fimNovas = somaDias(st.cfg.prova, -st.cfg.folgaFinal);
   const novasHoje = st.log[h]?.n || 0;
   const P = pesos();
-  const somaPesos = de => { let s = 0; for (let d = de; d <= fimNovas; d = somaDias(d, 1)) s += P[diaSemana(d)]; return s; };
-  let diasEstudo = 0;
-  for (let d = h; d <= fimNovas; d = somaDias(d, 1)) if (P[diaSemana(d)] > 0) diasEstudo++;
-  const pesoHoje = P[diaSemana(h)];
-  const hojeEstuda = pesoHoje > 0;
-  // meta calculada como se o dia estivesse começando agora (não muda conforme você avança no dia)
-  const sp = somaPesos(h);
-  const unidade = sp > 0 ? (restantes + novasHoje) / sp : restantes + novasHoje;   // novas num dia "normal"
-  const meta = Math.ceil(unidade * (pesoHoje || 1));
-  // meta de um dia futuro, se hoje você fizer `extra` novas além das que já fez
-  const amanha = somaDias(h, 1);
-  const spAmanha = somaPesos(amanha);
-  const metaFutura = (d, extra = 0) => (d > fimNovas || !P[diaSemana(d)] || spAmanha <= 0 ? 0
-    : Math.ceil(Math.max(0, restantes - Math.max(0, meta - novasHoje) * (hojeEstuda ? 1 : 0) - extra) / spAmanha * P[diaSemana(d)]));
-  let proxEstudo = null;
-  for (let k = 1; k <= 7; k++) { const d = somaDias(h, k); if (P[diaSemana(d)] > 0 && d <= fimNovas) { proxEstudo = d; break; } }
+  // ritmo das últimas 2 semanas (novas por dia corrido) e quando você termina nesse ritmo
   let n14 = 0;
   let ativos = 0;
   for (let k = 0; k < 14; k++) {
@@ -174,6 +160,25 @@ function plano() {
   }
   const ritmo = n14 / 14; // novas por dia corrido
   const previsao = ritmo > 0 && ativos >= 3 ? somaDias(h, Math.ceil(restantes / ritmo)) : null;
+  // dias de redação tiram (dia cheio) ou dividem (dia híbrido) a meta de questões daquele dia
+  const rdc = planoRedacao(h, fimNovas, P, previsao, ativos);
+  const pesoDe = d => P[diaSemana(d)] * rdc.fator(d);
+  const somaPesos = de => { let s = 0; for (let d = de; d <= fimNovas; d = somaDias(d, 1)) s += pesoDe(d); return s; };
+  let diasEstudo = 0;
+  for (let d = h; d <= fimNovas; d = somaDias(d, 1)) if (P[diaSemana(d)] > 0) diasEstudo++;
+  const pesoHoje = pesoDe(h);
+  const hojeEstuda = P[diaSemana(h)] > 0;
+  // meta calculada como se o dia estivesse começando agora (não muda conforme você avança no dia)
+  const sp = somaPesos(h);
+  const unidade = sp > 0 ? (restantes + novasHoje) / sp : restantes + novasHoje;   // novas num dia "normal"
+  const meta = Math.ceil(unidade * (hojeEstuda ? pesoHoje : 1));
+  // meta de um dia futuro, se hoje você fizer `extra` novas além das que já fez
+  const amanha = somaDias(h, 1);
+  const spAmanha = somaPesos(amanha);
+  const metaFutura = (d, extra = 0) => (d > fimNovas || !pesoDe(d) || spAmanha <= 0 ? 0
+    : Math.ceil(Math.max(0, restantes - Math.max(0, meta - novasHoje) * (hojeEstuda ? 1 : 0) - extra) / spAmanha * pesoDe(d)));
+  let proxEstudo = null;
+  for (let k = 1; k <= 7; k++) { const d = somaDias(h, k); if (P[diaSemana(d)] > 0 && d <= fimNovas) { proxEstudo = d; break; } }
   const retaFinal = h > fimNovas;
   return {
     total: pool.length, feitas, restantes, fimNovas, diasEstudo, hojeEstuda,
@@ -182,6 +187,7 @@ function plano() {
     novasHoje, ritmo, previsao, retaFinal, pesos: P, metaFutura, proxEstudo,
     diasProva: diffDias(h, st.cfg.prova),
     vencidas: vencidas().length,
+    redacao: rdc,
   };
 }
 
@@ -305,7 +311,8 @@ function embaralhar(l) {
   for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
   return l;
 }
-function montarSessao(tam, tipo = 'misto', tema = null) {
+// cota (opcional): { r } = quantas revisões entram no bloco misto; o resto são novas (usado no "Fechar o dia")
+function montarSessao(tam, tipo = 'misto', tema = null, cota = null) {
   const venc = vencidas();
   let revs = [];
   let novas = [];
@@ -325,7 +332,7 @@ function montarSessao(tam, tipo = 'misto', tema = null) {
     revs = base.slice(0, tam);
   } else {
     let cands = filaNovas();
-    const maxRev = cands.length ? Math.ceil(tam / 2) : tam;
+    const maxRev = cota ? Math.min(cota.r, tam) : cands.length ? Math.ceil(tam / 2) : tam;
     revs = venc.slice(0, maxRev);
     const nNovas = tam - revs.length;
     // reforço: ~1 em cada 3 novas vem dos temas mais fracos
@@ -639,6 +646,10 @@ function telaInicio() {
   const lgHoje = st.log[h] || { n: 0, r: 0, ok: 0 };
   const feitasHoje = lgHoje.n + lgHoje.r;
   const faltaHoje = Math.max(0, p.meta - p.novasHoje);
+  const f = diaHoje(p);
+  const rdc = p.redacao, redPend = !!(rdc.hoje && !rdc.hoje.feita);
+  // dia de redação: a meta guardada do dia acompanha a troca (para a semana não marcar "faltou")
+  if (rdc.hoje && st.log[h]?.m !== p.meta) { (st.log[h] ||= { n: 0, r: 0, ok: 0 }).m = p.meta; salvar(); }
   const recorde = Math.max(0, ...Object.entries(st.log).filter(([d]) => d !== h).map(([, l]) => l.n + l.r));
   // quanto a meta dos próximos dias cai com mais um bloco hoje
   const prox = p.proxEstudo;
@@ -658,15 +669,23 @@ function telaInicio() {
   else if (!p.hojeEstuda) mensagem = feitasHoje
     ? `Hoje é folga no seu cronograma e você já fez <b>${feitasHoje} ${feitasHoje === 1 ? 'questão' : 'questões'}</b> — tudo isso é lucro e adianta o cronograma.`
     : 'Hoje é dia de folga no seu cronograma. Se sobrar um tempinho, um bloco rápido ajuda — mas sem culpa.';
-  else if (faltaHoje === 0) mensagem = p.novasHoje > p.meta
-    ? `Meta batida e superada: <b>${p.novasHoje} novas</b> de ${p.meta} (+${p.novasHoje - p.meta}). Dá para ir além!`
-    : `Meta de hoje batida: <b>${p.novasHoje}/${p.meta} novas</b>. Dá para passar do limite!`;
-  else mensagem = `Meta de hoje: <b>${p.meta} questões novas</b> (${p.novasHoje} feitas, faltam ${faltaHoje})${p.vencidas ? ` + <b>${p.vencidas} revisões</b>` : ''}.`;
-  // barra que passa de 100%: a parte além da meta aparece em outra cor
-  const base = Math.max(p.meta, p.novasHoje, 1);
-  const barraHoje = p.retaFinal ? '' : `<div class="barra meta-barra" title="novas hoje">
-      <i style="width:${(100 * Math.min(p.novasHoje, p.meta || 0)) / base}%"></i><i class="alem" style="width:${(100 * Math.max(0, p.novasHoje - (p.meta || 0))) / base}%"></i>
-      ${p.meta ? `<b style="left:${(100 * p.meta) / base}%" title="meta: ${p.meta}"></b>` : ''}</div>`;
+  else if (redPend) mensagem = rdc.hoje.tipo === 'cheia'
+    ? `✍️ Hoje é <b>dia de redação</b>: no lugar das questões novas, escreva uma redação completa (~1h)${f.revFaltam ? `. Se der, faça também ${textoFalta({ revFaltam: f.revFaltam })}` : ''}.`
+    : `✍️ Hoje é <b>dia híbrido</b>: uma redação${f.faltam ? ` + <b>${textoFalta(f)}</b>` : ''}. Como você está um pouco atrás nas questões, a redação divide o dia com metade da meta.`;
+  else if (f.faltam === 0) mensagem = `✓ <b>Dia completo!</b> ${p.novasHoje > p.meta ? `E com <b>+${p.novasHoje - p.meta} novas</b> além da meta.` : 'Tudo o que era para hoje está feito.'} Daqui para frente é lucro.`;
+  else mensagem = `${f.total ? 'Para fechar o dia, faltam' : 'Hoje são'} <b>${textoFalta(f)}</b> <span class="muted">(~${f.faltam * 3} min)</span>.`;
+  // uma linha por tipo de questão do dia: barra + feitas/alvo (a parte além da meta aparece em outra cor)
+  const linhaHoje = (nome, feitas, alvo, dica) => {
+    const base = Math.max(alvo, feitas, 1);
+    return `<div class="hm-linha" title="${dica}"><span class="hm-nome">${nome}</span>
+      <div class="barra meta-barra"><i style="width:${(100 * Math.min(feitas, alvo)) / base}%"></i><i class="alem" style="width:${(100 * Math.max(0, feitas - alvo)) / base}%"></i></div>
+      <span class="hm-num"><b>${feitas}</b>${alvo ? `/${alvo}` : ''}${feitas >= alvo && alvo ? ' ✓' : ''}</span></div>`;
+  };
+  const linhas = [];
+  if (!p.retaFinal && (p.meta || p.novasHoje)) linhas.push(linhaHoje('Novas', p.novasHoje, p.meta, p.meta ? `meta de hoje: ${p.meta} questões novas` : 'questões novas feitas hoje'));
+  if (f.revs || f.revFaltam) linhas.push(linhaHoje('Revisões', f.revs, f.revs + f.revFaltam, `revisões: ${f.revs} feitas hoje, ${f.revFaltam} vencidas para fazer`));
+  const barraHoje = linhas.length ? `<div class="hoje-metas">${linhas.join('')}</div>` : '';
+  const pb = proximoBloco(p);
   const pt = previsaoTermino(p);
 
   $app.innerHTML = `
@@ -674,24 +693,31 @@ function telaInicio() {
     <p class="muted">${p.diasProva > 0 ? `Faltam <b>${p.diasProva} dias</b> para o ENEM (${fmt(st.cfg.prova)}).` : 'Configure a data da prova em Ajustes.'}</p>
 
     <section class="card destaque">
-      <h2>Estudar agora</h2>
-      <p>${mensagem}</p>
-      ${p.meta > 0 || p.novasHoje ? barraHoje : ''}
+      <div class="titulo-linha"><h2>Hoje</h2>${feitasHoje ? `<span class="small muted">${feitasHoje} ${feitasHoje === 1 ? 'questão respondida' : 'questões respondidas'}</span>` : ''}</div>
+      ${barraHoje}
+      <p style="margin-bottom:0">${mensagem}${rdc.hoje?.feita ? ' <span style="color:var(--ok)">✍️ Redação de hoje feita.</span>' : ''}</p>
+      ${redPend ? `<p class="small muted" style="margin:6px 0 0">Tema sugerido${anoDoTema(temaSugerido()) ? ` (🏅 Desafio dos anos: ENEM ${anoDoTema(temaSugerido())})` : ''}: <b>${esc(temaSugerido())}</b>. Dá para trocar na tela da redação.</p>` : ''}
       ${passar.length && (faltaHoje === 0 || !p.hojeEstuda) && !p.retaFinal ? `<p class="small" style="margin:10px 0 0">${passar.join('<br>')}</p>` : ''}
       <div class="linha-btns">
-        ${emAndamento
+        ${redPend ? '<button class="btn primario grande" data-acao="redacao">✍️ Escrever a redação de hoje</button>'
+          : emAndamento
           ? `<button class="btn primario grande" data-acao="continuar">Continuar bloco (${emAndamento.i + 1}/${emAndamento.itens.length})</button>`
-          : `<button class="btn primario grande" data-acao="bloco">Fazer um bloco de ${st.cfg.bloco} questões</button>`}
+          : `<button class="btn primario grande" data-acao="bloco">${pb.rotulo}</button>`}
       </div>
       <div class="linha-btns">
+        ${redPend ? (emAndamento ? `<button class="btn" data-acao="continuar">Continuar bloco (${emAndamento.i + 1}/${emAndamento.itens.length})</button>` : `<button class="btn" data-acao="bloco">${pb.rotulo}</button>`) : ''}
         <button class="btn" data-acao="rapido">⚡ Só 5 rapidinhas</button>
         ${revAberta ? `<button class="btn" data-acao="cont-rev">↺ Continuar correção (${revAberta.i + 1}/${revAberta.itens.length})</button>`
           : p.vencidas ? `<button class="btn" data-acao="revisar">↺ Só revisões (${p.vencidas})</button>` : ''}
+        ${redPend ? '<button class="btn fantasma" data-acao="red-feita" title="Escreveu no papel e não vai mandar para correção">Já fiz no papel</button><button class="btn fantasma" data-acao="red-adiar" title="Passa a redação para o próximo dia de estudo">Adiar</button>' : ''}
       </div>
-      <p class="small muted" style="margin-bottom:0">Um bloco de ${st.cfg.bloco} leva ~${st.cfg.bloco * 3} min. Pode parar no meio: o app guarda onde você parou.</p>
+      <p class="small muted" style="margin-bottom:0">Cada bloco mistura novas com as revisões do dia. Pode parar no meio: o app guarda onde você parou.</p>
     </section>
 
     ${cardFoco()}
+
+    ${cardRedacao(p)}
+    ${cardDesafio(p, f)}
 
     <section class="card">
       <div class="titulo-linha"><h2>Esta semana</h2><a class="small" href="#/ajustes">Mudar metas</a></div>
@@ -714,11 +740,18 @@ function telaInicio() {
       <a href="#/logica">Ver a lógica completa →</a>
     </section>
   `;
-  $app.querySelector('[data-acao=bloco]')?.addEventListener('click', () => iniciar(st.cfg.bloco));
+  $app.querySelector('[data-acao=bloco]')?.addEventListener('click', pb.ir);
   $app.querySelector('[data-acao=continuar]')?.addEventListener('click', () => retomar('normal'));
   $app.querySelector('[data-acao=cont-rev]')?.addEventListener('click', () => retomar('rev'));
   $app.querySelector('[data-acao=rapido]')?.addEventListener('click', () => iniciar(5));
   $app.querySelector('[data-acao=revisar]')?.addEventListener('click', () => iniciar(p.vencidas, 'rev'));
+  $app.querySelectorAll('[data-acao=redacao], [data-acao=red-bonus]').forEach(b => b.addEventListener('click', abrirRedacaoDoDia));
+  $app.querySelector('[data-acao=red-feita]')?.addEventListener('click', () => {
+    if (!confirm('Marcar a redação de hoje como feita (sem mandar para a correção)?')) return;
+    (red.feitas ||= []).push(h); salvarRed(); rota();
+  });
+  $app.querySelector('[data-acao=red-adiar]')?.addEventListener('click', () => { (red.adiadas ||= []).push(h); salvarRed(); rota(); });
+  ligarDesafio(p);
   ligarTreinar();
 }
 function cardFoco() {
@@ -758,21 +791,46 @@ function semanaHTML(p = plano()) {
     else if (meta) { estado = d < h ? `faltou ${meta - novas}` : `faltam ${meta - novas}`; cls = d < h ? 'faltou' : ''; }
     else if (tot) { estado = `★ +${tot} extra`; cls = 'superou'; }
     else estado = peso ? '' : 'folga';
+    const rs = p.redacao?.dias.get(d), rf = p.redacao?.feitas.has(d);
+    if (rs && d >= h && !rf) { estado = rs === 'cheia' ? '✍️ redação' : '✍️ + ½'; cls += ' redacao'; }
     const larg = meta ? Math.min(100, pct(novas, meta)) : tot ? 100 : 0;
     out += `<div class="${d === h ? 'hoje' : ''} ${!peso ? 'folga' : ''} ${cls}" title="${fmt(d)} · ${nomeNivel(peso)}${meta ? ` · meta: ${meta} novas` : ''}${tot ? ` · ${novas} novas + ${tot - novas} revisões · ${pct(lg.ok, tot)}% de acerto` : ''}">
       <span class="dia">${DIAS_SEMANA[k]}</span>
-      <b>${d > h ? (meta || '–') : tot || (d < h ? '·' : '0')}</b>
+      <b>${d > h ? (meta || (rs ? '✍️' : '–')) : meta ? novas : tot || (d < h ? '·' : rs ? '✍️' : '0')}</b>
       ${d <= h && (meta || tot) ? `<span class="mini-barra"><i style="width:${larg}%"></i></span>` : ''}
       <span class="est">${estado}</span>
+      ${meta && lg?.r ? `<span class="ac">+${lg.r} rev.</span>` : ''}
       ${tot ? `<span class="ac">${pct(lg.ok, tot)}%</span>` : ''}
+      ${rf && d <= h ? '<span class="ac" style="color:var(--ok)">✍️ feita</span>' : ''}
     </div>`;
   }
   out += '</div>';
   if (sMeta) out += `<p class="small muted" style="margin:10px 0 0">Na semana: <b>${sNovas}</b> de ${sMeta} questões novas.</p>`;
   return out;
 }
-function iniciar(tam, tipo, tema) {
-  if (!montarSessao(tam, tipo, tema)) {
+// o que já foi feito hoje e o que falta para "fechar o dia" (novas da meta + revisões vencidas)
+function diaHoje(p = plano()) {
+  const lg = st.log[hoje()] || { n: 0, r: 0, ok: 0 };
+  const novasFaltam = p.retaFinal ? 0 : Math.max(0, p.meta - p.novasHoje);
+  const revFaltam = p.vencidas;
+  return { novas: lg.n, revs: lg.r, total: lg.n + lg.r, novasFaltam, revFaltam, faltam: novasFaltam + revFaltam };
+}
+function textoFalta(f) {
+  const partes = [];
+  if (f.novasFaltam) partes.push(`${f.novasFaltam} ${f.novasFaltam === 1 ? 'nova' : 'novas'}`);
+  if (f.revFaltam) partes.push(`${f.revFaltam} ${f.revFaltam === 1 ? 'revisão' : 'revisões'}`);
+  return partes.join(' e ');
+}
+// próximo bloco normal: se o que falta para fechar o dia cabe num bloco, o bloco é exatamente isso
+function proximoBloco(p = plano()) {
+  const f = diaHoje(p);
+  if (p.hojeEstuda && !p.retaFinal && f.faltam > 0 && f.faltam <= st.cfg.bloco) {
+    return { rotulo: `Fechar o dia (${f.faltam} ${f.faltam === 1 ? 'questão' : 'questões'})`, ir: () => iniciar(f.faltam, 'misto', null, { r: f.revFaltam }) };
+  }
+  return { rotulo: `Fazer um bloco de ${st.cfg.bloco} questões`, ir: () => iniciar(st.cfg.bloco) };
+}
+function iniciar(tam, tipo, tema, cota) {
+  if (!montarSessao(tam, tipo, tema, cota)) {
     alert(tipo === 'rev' ? 'Nenhuma revisão pendente agora.' : tipo === 'tema' ? 'Você já fez todas as questões desse tema!' : 'Não há questões disponíveis com os filtros atuais. Confira as áreas em Ajustes.');
     return;
   }
@@ -1000,6 +1058,8 @@ function telaFimSessao() {
   const acertos = s.res.filter(r => r && r.ok).length;
   const erros = s.itens.filter((it, k) => s.res[k] && !s.res[k].ok);
   const p = plano();
+  const fd = diaHoje(p);
+  const pb = proximoBloco(p);
   if (s.avulsa) {
     st.sessao = s.volta;
     salvar();
@@ -1011,10 +1071,10 @@ function telaFimSessao() {
     <section class="card destaque" style="text-align:center">
       <h1>${grupoSessao(s) === 'rev' ? 'Correção concluída!' : 'Bloco concluído!'}</h1>
       <p style="font-size:40px;margin:8px 0;font-weight:800">${acertos}/${total}</p>
-      <p class="muted">${total ? `${pct(acertos, total)}% de acerto.` : ''} ${p.meta ? `Hoje: ${p.novasHoje}/${p.meta} novas.` : ''}</p>
+      <p class="muted">${total ? `${pct(acertos, total)}% de acerto.` : ''} ${p.hojeEstuda && !p.retaFinal ? (fd.faltam ? `Para fechar o dia: faltam ${textoFalta(fd)}.` : '✓ Dia completo!') : ''}</p>
       <div class="linha-btns" style="justify-content:center">
         ${sessaoDe(grupoSessao(s) === 'rev' ? 'normal' : 'rev') ? `<button class="btn primario" data-acao="outro">${grupoSessao(s) === 'rev' ? 'Continuar o bloco de questões' : 'Continuar a correção'}</button>` : ''}
-        <button class="btn ${sessaoDe(grupoSessao(s) === 'rev' ? 'normal' : 'rev') ? '' : 'primario'}" data-acao="mais">${grupoSessao(s) === 'rev' ? 'Corrigir mais' : 'Mais um bloco'}</button>
+        <button class="btn ${sessaoDe(grupoSessao(s) === 'rev' ? 'normal' : 'rev') ? '' : 'primario'}" data-acao="mais">${grupoSessao(s) === 'rev' ? 'Corrigir mais' : pb.rotulo.startsWith('Fechar') ? pb.rotulo : 'Mais um bloco'}</button>
         <a class="btn" href="${grupoSessao(s) === 'rev' ? '#/erros' : '#/'}">Voltar</a>
       </div>
     </section>
@@ -1022,7 +1082,7 @@ function telaFimSessao() {
       ${erros.map(it => { const q = BYID[it.id]; return `<li><div>${chipArea(q.area)} <span class="tit">${tituloQ(q)}</span></div><button class="btn" data-ver="${q.id}">Rever</button></li>`; }).join('')}
     </ul></section>` : ''}
   `;
-  $app.querySelector('[data-acao=mais]').addEventListener('click', () => (grupoSessao(s) === 'rev' ? iniciar(st.cfg.bloco, 'rev') : iniciar(st.cfg.bloco)));
+  $app.querySelector('[data-acao=mais]').addEventListener('click', () => (grupoSessao(s) === 'rev' ? iniciar(st.cfg.bloco, 'rev') : pb.ir()));
   $app.querySelector('[data-acao=outro]')?.addEventListener('click', () => retomar(grupoSessao(s) === 'rev' ? 'normal' : 'rev'));
   $app.querySelectorAll('[data-ver]').forEach(b => b.addEventListener('click', () => { location.hash = '#/ver/' + b.dataset.ver; }));
 }
@@ -1511,6 +1571,8 @@ function telaAjustes() {
       <div class="pesos" id="pesos"></div>
       <label class="campo" for="bloco">Tamanho do bloco</label>
       <select id="bloco">${[5, 10, 15, 20, 30].map(n => `<option value="${n}" ${c.bloco === n ? 'selected' : ''}>${n} questões (~${n * 3} min)</option>`).join('')}</select>
+      <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="red-crono" ${c.redacao !== false ? 'checked' : ''}> ✍️ Redação no cronograma</label></div>
+      <p class="small muted">Ligado: as redações necessárias para tirar 900+ nos temas de todos os ENEM desde 2010 em até 1 ano (Desafio dos anos, ~2 por mês no começo), no lugar das questões do dia; +1 por mês se você estiver adiantado; dia híbrido (redação + metade da meta) se estiver atrasado; pelo menos 1 por semana na reta final.</p>
     </section>
     <section class="card">
       <h2>Questões</h2>
@@ -1552,6 +1614,7 @@ function telaAjustes() {
   g('lingua').addEventListener('change', e => { c.lingua = e.target.value; salvar(); });
   g('ordem').addEventListener('change', e => { c.ordem = e.target.value; salvar(); });
   g('foco').addEventListener('change', e => { c.foco = e.target.checked; salvar(); });
+  g('red-crono').addEventListener('change', e => { c.redacao = e.target.checked; if (st.log[hoje()]) delete st.log[hoje()].m; salvar(); });
   const camposIA = () => {
     const k = iaAtual(), x = IAS[k];
     g('ia-campos').innerHTML = `
@@ -1748,8 +1811,8 @@ async function geminiStream(modelo, chave, sistema, pedido, imgs, ctx) {
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chave },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: sistema }] },
-          contents: [{ role: 'user', parts: [...imgs.map(data => ({ inline_data: { mime_type: 'image/webp', data } })), { text: pedido }] }],
-          generationConfig: { maxOutputTokens: 8000, ...(comPensar ? { thinkingConfig: comPensar } : {}) },
+          contents: [{ role: 'user', parts: [...imgs.map(i => ({ inline_data: { mime_type: imgTipo(i), data: imgDados(i) } })), { text: pedido }] }],
+          generationConfig: { maxOutputTokens: ctx.max || 8000, ...(ctx.json ? { responseMimeType: 'application/json' } : {}), ...(comPensar ? { thinkingConfig: comPensar } : {}) },
         }),
       });
       if (!r.ok) throw await erroHTTP(r);
@@ -1807,6 +1870,9 @@ async function lerSSE(r, onDados) {
     }
   }
 }
+// imagem para a IA: texto base64 (webp, das questões) ou { data, mime } (fotos)
+const imgTipo = i => (typeof i === 'string' ? 'image/webp' : i.mime);
+const imgDados = i => (typeof i === 'string' ? i : i.data);
 function modeloIA(ia) { return ia === 'anthropic' ? MODELO : st.cfg[IAS[ia].modelo] || ''; }
 // Chama a IA escolhida. ctx: { signal, etapa(txt), texto(parcial) }. Devolve o texto, ou null se a IA se recusou.
 async function chamarIA(ia, sistema, pedido, imgs, ctx) {
@@ -1821,12 +1887,12 @@ async function chamarIA(ia, sistema, pedido, imgs, ctx) {
     try {
       const stream = client.beta.messages.stream({
         model: MODELO,
-        max_tokens: 8000,
-        output_config: { effort: 'medium' },
+        max_tokens: ctx.max || 8000,
+        output_config: { effort: ctx.esforco || 'medium' },
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
         system: sistema,
-        messages: [{ role: 'user', content: [...imgs.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/webp', data } })), { type: 'text', text: pedido }] }],
+        messages: [{ role: 'user', content: [...imgs.map(i => ({ type: 'image', source: { type: 'base64', media_type: imgTipo(i), data: imgDados(i) } })), { type: 'text', text: pedido }] }],
       }, { signal: ctx.signal });
       stream.on('connect', () => ctx.etapa('O Claude está pensando'));
       stream.on('text', t => { texto += t; ctx.texto(texto); });
@@ -1885,11 +1951,12 @@ async function chamarIA(ia, sistema, pedido, imgs, ctx) {
       body: JSON.stringify({
         model: modelo,
         stream: true,
-        max_completion_tokens: 8000,
+        max_completion_tokens: ctx.max || 8000,
         ...(raciocina ? { reasoning_effort: 'low' } : {}),
+        ...(ctx.json ? { response_format: { type: 'json_object' } } : {}),
         messages: [
           { role: 'system', content: sistema },
-          { role: 'user', content: [...imgs.map(data => ({ type: 'image_url', image_url: { url: `data:image/webp;base64,${data}` } })), { type: 'text', text: pedido }] },
+          { role: 'user', content: [...imgs.map(i => ({ type: 'image_url', image_url: { url: `data:${imgTipo(i)};base64,${imgDados(i)}` } })), { type: 'text', text: pedido }] },
         ],
       }),
     });
@@ -1924,12 +1991,14 @@ async function imagemBase64(src) {
 const LIMITE_IA = 150;   // segundos (dá tempo de trocar de modelo se o primeiro não responder)
 const SISTEMA_IA = 'Você é um professor experiente de cursinho pré-ENEM. Responde em português do Brasil, de forma curta, clara e correta. Confie no gabarito oficial informado.';
 const pedidosIA = new Map();   // chave da explicação -> AbortController
-async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo }) {
+// opções extras (redação): limite (s), max (tokens), esforco, json, etapa0, parcial(texto) -> html do andamento,
+// processar(texto) -> resultado (pode lançar erro de formato), mostrar(resultado, el, nota) desenha o resultado
+async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo, limite = LIMITE_IA, max, esforco, json, etapa0, parcial, processar, mostrar }) {
   const ia = iaAtual();
   const nome = IAS[ia].nome;
   const ctrl = new AbortController();
   const t0 = Date.now();
-  let etapa = 'Preparando a imagem da questão', texto = '', motivoAbort = '', nota = '';
+  let etapa = etapa0 || 'Preparando a imagem da questão', texto = '', motivoAbort = '', nota = '';
   el.innerHTML = `<div class="ia-andamento"><span class="ia-etapa"></span> <button class="btn mini" type="button">Cancelar</button></div><div class="ia-texto"></div>`;
   const elEtapa = el.querySelector('.ia-etapa'), elTexto = el.querySelector('.ia-texto');
   const seg = () => Math.round((Date.now() - t0) / 1000);
@@ -1937,20 +2006,27 @@ async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo }
   pinta();
   const relogio = setInterval(() => {
     pinta();
-    if (seg() >= LIMITE_IA) { motivoAbort = 'tempo'; ctrl.abort(); }
+    if (seg() >= limite) { motivoAbort = 'tempo'; ctrl.abort(); }
   }, 1000);
   el.querySelector('.ia-andamento .btn').addEventListener('click', () => { motivoAbort = 'cancelado'; ctrl.abort(); });
   const ctx = {
-    signal: ctrl.signal,
+    signal: ctrl.signal, max, esforco, json,
     etapa: t => { etapa = t; pinta(); },
-    texto: t => { texto = t; etapa = 'Escrevendo'; pinta(); if (elTexto.isConnected) elTexto.innerHTML = `<p>${md(t)}</p>`; },
+    texto: t => { texto = t; etapa = 'Escrevendo'; pinta(); if (elTexto.isConnected) elTexto.innerHTML = parcial ? parcial(t) : `<p>${md(t)}</p>`; },
     nota: t => { nota = t; },
   };
   try {
     const imgs = await imgsDe();
     const final = await chamarIA(ia, sistema, pedido, imgs, ctx);
     clearInterval(relogio);
-    if (final === null) { el.innerHTML = `<p class="aviso">${esc(nome)} preferiu não responder essa questão. Tente o vídeo do YouTube ou outra IA em Ajustes.</p>`; return null; }
+    if (final === null) { el.innerHTML = `<p class="aviso">${esc(nome)} preferiu não responder ${processar ? 'esse pedido. Tente outra IA em Ajustes.' : 'essa questão. Tente o vídeo do YouTube ou outra IA em Ajustes.'}</p>`; return null; }
+    if (processar) {
+      etapa = 'Lendo a resposta';
+      const res = processar(final);
+      aoTerminar?.(res, final);
+      mostrar(res, el, nota);
+      return res;
+    }
     el.innerHTML = `<p>${md(final)}</p>` + (nota ? `<p class="small muted" style="margin:0">${esc(nota)}</p>` : '');
     aoTerminar?.(final);
     return final;
@@ -1959,11 +2035,12 @@ async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo }
     if (motivoAbort === 'cancelado') { el.innerHTML = '<p class="small muted">Cancelado. <button class="btn mini" type="button" data-de-novo>Tentar de novo</button></p>'; el.querySelector('[data-de-novo]').addEventListener('click', tentarDeNovo); return null; }
     const cod = err.status;
     let msg;
-    if (motivoAbort === 'tempo') msg = `${nome} não respondeu em ${LIMITE_IA} s. Tente de novo ou escolha um modelo mais rápido (“flash” ou “mini”) em Ajustes.`;
+    if (motivoAbort === 'tempo') msg = `${nome} não respondeu em ${limite} s. Tente de novo ou escolha um modelo mais rápido (“flash” ou “mini”) em Ajustes.`;
     else if (cod === 401 || cod === 403 || (cod === 400 && /api.?key/i.test(err.message))) msg = `A chave do ${nome} foi recusada. Confira em Ajustes.`;
     else if (cod === 429) msg = 'Limite da sua chave atingido (muitas requisições seguidas ou sem crédito). Tente de novo daqui a pouco.';
     else if (cod === 404) msg = `O modelo “${modeloIA(ia)}” não foi encontrado para a sua chave. Escolha outro em Ajustes.`;
     else if (cod >= 500) msg = `O servidor do ${nome} falhou agora. Tente de novo em alguns segundos.`;
+    else if (err.formato) msg = 'A IA respondeu num formato que não consegui ler. Tente de novo (às vezes a resposta vem cortada).';
     else if (err instanceof TypeError && !cod) msg = 'Não consegui falar com o servidor da IA (sem internet ou bloqueado pela rede).';
     else msg = 'Não consegui gerar a explicação.';
     // detalhes para corrigir — nunca inclui a chave
@@ -1973,7 +2050,7 @@ async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo }
       `Modelo: ${modeloIA(ia) || '(não escolhido)'}`,
       `Parou em: ${etapa} (${seg()} s)`,
       cod ? `Código HTTP: ${cod}` : '',
-      `Mensagem: ${motivoAbort === 'tempo' ? `sem resposta em ${LIMITE_IA} s` : (err.message || String(err))}`,
+      `Mensagem: ${motivoAbort === 'tempo' ? `sem resposta em ${limite} s` : (err.message || String(err))}`,
       texto ? `Texto recebido até parar: ${texto.length} caracteres` : 'Nenhum texto chegou',
       `Navegador: ${navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 120)}`,
     ].filter(Boolean).join('\n');
@@ -1981,7 +2058,7 @@ async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo }
     el.innerHTML = `<div class="aviso"><p style="margin:0 0 6px"><b>${esc(msg)}</b></p>`
       + `<pre class="ia-detalhes">${esc(detalhes)}</pre>`
       + '<div class="linha-btns" style="margin-top:6px"><button class="btn mini" type="button" data-de-novo>Tentar de novo</button><button class="btn mini" type="button" data-copiar>Copiar detalhes</button></div></div>'
-      + (texto ? `<div class="ia-texto"><p>${md(texto)}</p></div>` : '');
+      + (texto && !processar ? `<div class="ia-texto"><p>${md(texto)}</p></div>` : '');
     el.querySelector('[data-de-novo]').addEventListener('click', tentarDeNovo);
     el.querySelector('[data-copiar]').addEventListener('click', e => {
       navigator.clipboard?.writeText(detalhes).then(() => { e.target.textContent = 'Copiado ✓'; }, () => { e.target.textContent = 'Selecione o texto acima'; });
@@ -2041,6 +2118,1000 @@ function testarIA(el) {
   });
 }
 
+// ---------------------------------------------------------------- redação com correção por IA
+// O texto (digitado ou fotografado) vai para a IA com a matriz do INEP e as lições das redações nota 1000
+// (data/redacao.js). A IA devolve JSON: trechos marcados por nível (verde → vermelho), notas por competência
+// num cenário pessimista e num otimista, o que estudar (busca no YouTube) e dicas de português.
+const KEY_RED = 'enem.redacoes';
+const GUIA = window.REDACAO || { competencias: [], zeram: [], licoes: [], criterio: () => '' };
+let red = { rascunho: { tema: '', texto: '', modo: 'folha' }, hist: [] };
+try { red = { ...red, ...(JSON.parse(localStorage.getItem(KEY_RED)) || {}) }; } catch { /* recomeça */ }
+// modos: folha (30 linhas, padrão) | foto | livre (caixa de texto solta, para passar a limpo do papel)
+if (!['folha', 'foto', 'livre'].includes(red.rascunho.modo)) red.rascunho.modo = 'folha';
+function salvarRed() {
+  for (;;) {
+    try { localStorage.setItem(KEY_RED, JSON.stringify(red)); return; } catch {
+      if (red.hist.length <= 1) return;   // cheio: descarta as correções mais antigas
+      red.hist.pop();
+    }
+  }
+}
+let fotosRed = [];   // fotos da folha (só na memória): { data, mime, url }
+// níveis das marcações: 1 (melhor) a 5 (pior); 0 = leitura duvidosa da foto
+const NIVEIS_RED = {
+  1: ['Excelente', 'trecho no nível nota 1000 — continue fazendo assim'],
+  2: ['Bom', 'funciona bem'],
+  3: ['Pode melhorar', 'não está errado, mas outra forma renderia mais'],
+  4: ['Problema', 'deve custar pontos'],
+  5: ['Erro grave', 'custa pontos com certeza'],
+  0: ['Leitura duvidosa', 'a IA não tem certeza se leu certo a sua letra'],
+};
+const TIPOS_RED = {
+  ortografia: 'Ortografia', acentuacao: 'Acentuação', gramatica: 'Gramática', pontuacao: 'Pontuação', crase: 'Crase',
+  concordancia: 'Concordância', regencia: 'Regência', coesao: 'Coesão', repertorio: 'Repertório', argumentacao: 'Argumentação',
+  tese: 'Tese', proposta: 'Proposta', estrutura: 'Estrutura', vocabulario: 'Vocabulário', tema: 'Tema', leitura: 'Leitura da foto',
+};
+const TEMAS_ENEM = [
+  [2025, 'Perspectivas acerca do envelhecimento na sociedade brasileira'],
+  [2024, 'Desafios para a valorização da herança africana no Brasil'],
+  [2023, 'Desafios para o enfrentamento da invisibilidade do trabalho de cuidado realizado pela mulher no Brasil'],
+  [2022, 'Desafios para a valorização de comunidades e povos tradicionais no Brasil'],
+  [2021, 'Invisibilidade e registro civil: garantia de acesso à cidadania no Brasil'],
+  [2020, 'O estigma associado às doenças mentais na sociedade brasileira'],
+  [2019, 'Democratização do acesso ao cinema no Brasil'],
+  [2018, 'Manipulação do comportamento do usuário pelo controle de dados na internet'],
+  [2017, 'Desafios para a formação educacional de surdos no Brasil'],
+  [2016, 'Caminhos para combater a intolerância religiosa no Brasil'],
+  [2015, 'A persistência da violência contra a mulher na sociedade brasileira'],
+  [2014, 'Publicidade infantil em questão no Brasil'],
+  [2013, 'Efeitos da implantação da Lei Seca no Brasil'],
+  [2012, 'O movimento imigratório para o Brasil no século XXI'],
+  [2011, 'Viver em rede no século XXI: os limites entre o público e o privado'],
+  [2010, 'O trabalho na construção da dignidade humana'],
+];
+// ---- desafio dos anos: uma redação 900+ no tema de cada ENEM desde 2010.
+// Referências: redações reais com nota 980–1000 em cada tema (data/referencias.js: autor, nota, link e análise).
+const REFS = window.REFERENCIAS || { anos: [] };
+const normTema = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+function anoDoTema(tema) {
+  const n = normTema(tema);
+  if (!n) return null;
+  const x = TEMAS_ENEM.find(([, t]) => normTema(t) === n);
+  return x ? x[0] : null;
+}
+// nota de uma correção para o desafio: média dos dois cenários (como a média de dois corretores, em degraus de 20)
+const notaMedia = res => Math.round((notaTotal(res, 'pessimista') + notaTotal(res, 'otimista')) / 40) * 20;
+function placarAnos() {
+  const melhor = {};
+  for (const x of red.hist) {
+    const a = anoDoTema(x.tema);
+    if (a && !(melhor[a] >= notaMedia(x.res))) melhor[a] = notaMedia(x.res);
+  }
+  return melhor;
+}
+function desafioAnosHTML() {
+  const m = placarAnos();
+  const feitos = TEMAS_ENEM.filter(([a]) => m[a] >= 900).length;
+  return `<section class="card" id="anos">
+    <div class="titulo-linha"><h2>🏅 Desafio dos anos</h2><span class="small muted">${feitos} de ${TEMAS_ENEM.length} com 900+</span></div>
+    <p class="small muted" style="margin:0 0 10px">900+ no tema de cada ENEM desde 2010. Toque num ano para ver redações reais nota 980–1000.</p>
+    <div class="barra" style="margin-bottom:12px"><i style="width:${Math.max(1, pct(feitos, TEMAS_ENEM.length))}%"></i></div>
+    <div class="anos-grade">${TEMAS_ENEM.map(([a, t]) => {
+      const n = m[a];
+      return `<button class="ano ${n >= 900 ? 'ok' : n ? 'tentou' : ''}" type="button" data-ano="${a}" title="${esc(t)}"><b>${a}</b><span>${n >= 900 ? `🏅 ${n}` : n || '—'}</span></button>`;
+    }).join('')}</div>
+    <div id="ano-detalhe"></div>
+  </section>`;
+}
+function anoDetalheHTML(a) {
+  const tema = TEMAS_ENEM.find(x => x[0] === a)[1];
+  const ref = REFS.anos.find(x => x.ano === a);
+  const n = placarAnos()[a];
+  const refs = ref?.redacoes || [];
+  return `<div class="ano-detalhe">
+    <h3>ENEM ${a}: ${esc(tema)}</h3>
+    <p class="small" style="margin:4px 0 10px">${n ? (n >= 900 ? `🏅 Conquistado com ${n}.` : `Sua melhor: <b>${n}</b> — faltam ${900 - n} para 900.`) : 'Você ainda não escreveu sobre este tema.'}</p>
+    <button class="btn primario" type="button" data-escrever="${a}">✍️ Escrever sobre este tema</button>
+    ${refs.length ? `<p class="small muted" style="margin:14px 0 6px">${refs.length} ${refs.length === 1 ? 'redação real' : 'redações reais'} com nota máxima neste tema. Abra para ver o que cada uma fez e leia o texto completo na fonte:</p>
+      <div class="refs">${refs.map(r => `<details class="ref"><summary><b>${esc(r.autor)}</b> · ${esc(r.nota)} <span class="small muted">· ${esc(r.fonte)}</span></summary>
+        <ul class="small">${r.introducao ? `<li><b>Introdução:</b> ${esc(r.introducao)}</li>` : ''}${(r.argumentos || []).map((x, i) => `<li><b>D${i + 1}:</b> ${esc(x)}</li>`).join('')}${r.proposta ? `<li><b>Proposta:</b> ${esc(r.proposta)}</li>` : ''}${r.destaque ? `<li><b>Por que funciona:</b> ${esc(r.destaque)}</li>` : ''}</ul>
+        ${r.url ? `<a class="btn mini" href="${esc(r.url)}" target="_blank" rel="noopener">Ler a redação completa ↗</a>` : ''}</details>`).join('')}</div>`
+      : `<p class="small muted" style="margin:14px 0 0">${esc(ref?.aviso || 'Ainda não há redações de referência para este ano.')}</p>`}
+  </div>`;
+}
+const linkYT = termo => 'https://www.youtube.com/results?search_query=' + encodeURIComponent(termo);
+// ---- folha de 30 linhas
+// Cada linha comporta o texto médio de uma linha das redações nota 1000 (GUIA.media.caracteresPorLinha):
+// a fonte é calculada para caber essa quantidade de caracteres na largura da folha.
+const RECUO = '\u2003\u2003';   // recuo de parágrafo (dois espaços "eme")
+const CAP_LINHA = GUIA.media?.caracteresPorLinha || 112;
+const FONTE_RED = '"Iowan Old Style", "Palatino Linotype", Georgia, serif';
+const AMOSTRA_RED = 'A educação pública no Brasil enfrenta desafios históricos, como a desigualdade regional e a falta de investimento, que comprometem a formação dos jovens e, por conseguinte, o desenvolvimento do país.';
+let kFonteRed = 0;   // largura média de um caractere por px de fonte
+function larguraCaractere() {
+  if (!kFonteRed) {
+    const cv = document.createElement('canvas').getContext('2d');
+    cv.font = `100px ${FONTE_RED}`;
+    kFonteRed = cv.measureText(AMOSTRA_RED).width / AMOSTRA_RED.length / 100 || 0.45;
+  }
+  return kFonteRed;
+}
+const paragrafos = t => String(t || '').split(/\n+/).map(p => p.trim()).filter(Boolean);
+const paraFolha = t => paragrafos(t).map(p => RECUO + p).join('\n');
+const paraLivre = t => paragrafos(t).join('\n\n');
+// linhas que o texto ocupa na folha do ENEM (medido numa folha invisível com as proporções da folha)
+let espelhoRed = null;
+function linhasNaFolha(textoFolha) {
+  if (!String(textoFolha).trim()) return 0;
+  if (!espelhoRed) {
+    espelhoRed = document.createElement('div');
+    espelhoRed.setAttribute('aria-hidden', 'true');
+    Object.assign(espelhoRed.style, { position: 'absolute', left: '-9999px', top: '0', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', fontFamily: FONTE_RED, fontSize: '16px', lineHeight: '24px' });
+    document.body.appendChild(espelhoRed);
+  }
+  espelhoRed.style.width = `${CAP_LINHA * larguraCaractere() * 16}px`;
+  espelhoRed.textContent = textoFolha + '\u200b';
+  return Math.round(espelhoRed.scrollHeight / 24);
+}
+function contarRed(t) {
+  const pars = paragrafos(t);
+  return { palavras: (t.match(/\S+/g) || []).length, pars: pars.length, linhas: linhasNaFolha(paraFolha(t)) };
+}
+function notaTotal(res, lado) { return res.anulada ? 0 : res.competencias.reduce((s, c) => s + c[lado], 0); }
+
+// foto -> JPEG de até 1800 px no lado maior (bom para ler a letra e leve para enviar)
+async function prepararFoto(arquivo) {
+  const url = URL.createObjectURL(arquivo);
+  const img = await new Promise((ok, falha) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => falha(new Error('não consegui abrir essa imagem')); i.src = url; });
+  const k = Math.min(1, 1800 / Math.max(img.naturalWidth, img.naturalHeight));
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
+  cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+  return { data: cv.toDataURL('image/jpeg', 0.85).split(',')[1], mime: 'image/jpeg', url };
+}
+
+function telaRedacao(arg) {
+  if (arg) { const r = red.hist.find(x => x.id === arg); if (r) return verCorrecao(r); }
+  const R = red.rascunho;
+  const M = GUIA.media || {};
+  $app.classList.add('larga');
+  $app.innerHTML = `<div class="red-pagina">
+    <div class="titulo-linha red-topo"><h1>Redação</h1><button class="btn mini" type="button" data-logica>📖 Como a correção funciona</button></div>
+    <section class="card destaque">
+      <label class="campo" for="red-tema" style="margin-top:0">Tema da proposta</label>
+      <input type="text" id="red-tema" list="red-temas" placeholder="Ex.: Desafios para a valorização da herança africana no Brasil" value="${esc(R.tema)}">
+      <datalist id="red-temas">${TEMAS_ENEM.map(([a, t]) => `<option value="${esc(t)}">ENEM ${a}</option>`).join('')}</datalist>
+      <div class="seletor" role="tablist" style="margin-top:14px">
+        <button class="op ${R.modo !== 'foto' ? 'on' : ''}" data-modo="folha" type="button">📝 Folha de redação</button>
+        <button class="op ${R.modo === 'foto' ? 'on' : ''}" data-modo="foto" type="button">📷 Foto da folha</button>
+      </div>
+      <div data-painel="folha" ${R.modo === 'folha' ? '' : 'hidden'}>
+        <div class="vivo-linha" style="margin-top:12px">
+          <label class="vivo-chave"><input type="checkbox" id="red-vivo" ${red.vivo ? 'checked' : ''}> ⚡ Correção em tempo real</label>
+          <span class="small muted" id="vivo-status"></span>
+        </div>
+        <div class="folha-red ${red.vivo ? 'vivo' : ''}" id="folha-red">
+          <div class="folha-nums" id="folha-nums" aria-hidden="true"></div>
+          <div class="folha-corpo">
+            <div class="folha-fundo" id="folha-fundo" aria-hidden="true"></div>
+            <textarea id="red-folha" class="folha-area" spellcheck="false" autocorrect="off" autocapitalize="sentences" aria-label="Folha de redação, 30 linhas">${esc(R.modo === 'folha' ? R.texto : paraFolha(R.texto))}</textarea>
+            <div class="vivo-painel" id="vivo-painel" role="dialog" aria-label="Comentário da IA" hidden></div>
+          </div>
+        </div>
+        <p class="small" id="folha-conta" style="margin:6px 0 0"></p>
+        <p class="small muted" style="margin:6px 0 0">Só passando a limpo do papel? <a href="#" data-livre="1">Texto livre</a></p>
+      </div>
+      <div data-painel="livre" ${R.modo === 'livre' ? '' : 'hidden'}>
+        <p class="small muted" style="margin:10px 0 0"><a href="#" data-livre="0">← Voltar para a folha de 30 linhas</a></p>
+        <textarea id="red-texto" class="red-area" placeholder="Cole ou digite sua redação aqui. Deixe uma linha entre os parágrafos.">${esc(R.modo === 'livre' ? R.texto : paraLivre(R.texto))}</textarea>
+        <p class="small muted" id="red-conta" style="margin:4px 0 0"></p>
+      </div>
+      <div data-painel="foto" ${R.modo === 'foto' ? '' : 'hidden'}>
+        <p class="small muted" style="margin:10px 0">A IA pode ler alguma palavra errado: o que ela não tiver certeza fica em <span class="m n0">cinza tracejado</span>, e dá para conferir a transcrição depois.</p>
+        <div class="red-fotos" id="red-fotos"></div>
+        <label class="btn" style="margin-top:8px">📷 Tirar ou escolher foto<input type="file" accept="image/*" capture="environment" id="red-foto" hidden multiple></label>
+        <p class="small muted" style="margin:8px 0 0">Folha reta e inteira, luz de frente, até 3 fotos.</p>
+      </div>
+      <div class="linha-btns"><button class="btn primario grande" id="red-enviar" type="button">Corrigir redação</button></div>
+      <div id="red-ia" class="explicacao red-andamento"></div>
+    </section>
+    ${desafioAnosHTML()}
+    ${red.hist.length ? `<section class="card"><h2>Suas correções</h2><ul class="lista">${red.hist.map(h => `<li><div><span class="tit">${esc(h.tema || h.res.tema_usado || 'Sem tema')}</span>
+      <div class="small muted">${new Date(h.data).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} · ${h.modo === 'foto' ? 'foto' : 'texto'} · nota ${faixaNota(h.res)}</div></div>
+      <a class="btn mini" href="#/redacao/${h.id}">Ver</a></li>`).join('')}</ul></section>` : ''}
+    ${guiaHTML()}
+  </div>`;
+  const g = id => document.getElementById(id);
+  const avisoLinhas = n => (n && n <= 7 ? ' <b style="color:var(--erro)">— até 7 linhas zera a redação</b>'
+    : n > 30 ? ' <b style="color:var(--erro)">— passou da folha: na prova não cabe</b>' : n >= 25 ? ' <span style="color:var(--ok)">✓ bom tamanho</span>' : '');
+  const conta = () => {
+    const c = contarRed(g('red-texto').value);
+    g('red-conta').innerHTML = c.palavras
+      ? `${c.palavras} palavras · ${c.pars} ${c.pars === 1 ? 'parágrafo' : 'parágrafos'} · ≈ ${c.linhas} de 30 linhas na folha${avisoLinhas(c.linhas)}`
+      : 'A folha do ENEM tem 30 linhas; o ideal é escrever de 25 a 30.';
+  };
+  conta();
+  // folha: a fonte acompanha a largura para cada linha comportar CAP_LINHA caracteres; no celular (folha estreita)
+  // a fonte não diminui além do legível e a contagem passa a ser a das linhas equivalentes na folha de papel
+  const folha = g('folha-red'), area = g('red-folha'), nums = g('folha-nums');
+  const medirFolha = () => {
+    if (!folha.isConnected || folha.offsetParent === null) return;
+    const cs = getComputedStyle(area);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const util = area.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const fPapel = util / (CAP_LINHA * larguraCaractere());
+    const exata = fPapel >= 13;
+    const f = exata ? fPapel : 17;
+    const lh = Math.round(f * 1.75 * 100) / 100;
+    folha.style.setProperty('--f', `${f}px`);
+    folha.style.setProperty('--lh', `${lh}px`);
+    folha.classList.toggle('aproximada', !exata);
+    area.style.height = '0px';
+    const vis = Math.max(1, Math.round((area.scrollHeight - padY) / lh));
+    const linhas = Math.max(exata ? 30 : 16, vis);
+    area.style.height = `${linhas * lh + padY}px`;
+    if (exata && nums.childElementCount !== linhas) nums.innerHTML = Array.from({ length: linhas }, (_, i) => `<span class="${i >= 30 ? 'fora' : ''}">${i + 1}</span>`).join('');
+    const usadas = !area.value.trim() ? 0 : exata ? vis : linhasNaFolha(area.value);
+    const palavras = (area.value.match(/\S+/g) || []).length;
+    g('folha-conta').innerHTML = `<b>${usadas}</b> de 30 linhas${exata ? '' : ' (equivalente na folha de papel)'} · ${palavras} palavras${avisoLinhas(usadas)}`;
+  };
+  area.addEventListener('focus', () => { if (!area.value) { area.value = RECUO; R.texto = RECUO; } });
+  area.addEventListener('blur', () => { if (!area.value.trim()) { area.value = ''; R.texto = ''; salvarRed(); medirFolha(); } });
+  area.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+    e.preventDefault();
+    // insertText mantém o Ctrl+Z funcionando; setRangeText é a reserva
+    if (!document.execCommand('insertText', false, '\n' + RECUO)) {
+      area.setRangeText('\n' + RECUO, area.selectionStart, area.selectionEnd, 'end');
+      area.dispatchEvent(new Event('input'));
+    }
+  });
+  // ---- correção em tempo real: a IA lê o que você já escreveu e grifa trechos na própria folha (camada atrás do
+  // texto, com a mesma fonte e as mesmas linhas). Clicar num trecho colorido mostra o comentário e a sugestão.
+  const fundo = g('folha-fundo'), painelVivo = g('vivo-painel'), statusVivo = g('vivo-status');
+  let vivoMarcas = Array.isArray(red.vivoMarcas) ? red.vivoMarcas : [];
+  let vivoTimer = 0, vivoCtrl = null, vivoUltimo = red.vivoTexto || '', vivoQuando = 0, vivoErro = '';
+  const desenharFundo = () => {
+    fundo.innerHTML = red.vivo && vivoMarcas.length ? textoMarcado(area.value, vivoMarcas, false) + '\u200b' : '';
+  };
+  const pintarStatus = () => {
+    if (!red.vivo) statusVivo.innerHTML = '';
+    else if (!chaveIA()) statusVivo.innerHTML = 'precisa da chave de API em <a href="#/ajustes">Ajustes</a>';
+    else if (vivoCtrl) statusVivo.textContent = 'a IA está lendo o que você escreveu…';
+    else if (vivoErro) statusVivo.textContent = `não consegui analisar agora (${vivoErro}) — tento de novo no próximo trecho`;
+    else if (!vivoQuando && !vivoMarcas.length) statusVivo.textContent = 'a IA começa a ler depois das primeiras frases';
+    else {
+      const n = vivoMarcas.filter(m => m.pos).length;
+      const seg = vivoQuando ? Math.round((Date.now() - vivoQuando) / 1000) : 0;
+      statusVivo.textContent = `${n} ${n === 1 ? 'trecho marcado' : 'trechos marcados'}${vivoQuando ? ` · lido há ${seg < 60 ? `${seg} s` : `${Math.round(seg / 60)} min`}` : ''} · clique num trecho colorido`;
+    }
+  };
+  const VIVO_PAUSA = 5000, VIVO_INTERVALO = 40000;   // espera você parar 5 s; no máximo uma leitura a cada 40 s
+  const agendarVivo = () => {
+    clearTimeout(vivoTimer);
+    if (!red.vivo || !chaveIA() || location.protocol === 'file:' || vivoCtrl) return;
+    const t = paraLivre(area.value);
+    if ((t.match(/\S+/g) || []).length < 25 || t === vivoUltimo) return;
+    // só vale ler de novo quando terminou uma frase ou mudou um pedaço razoável
+    if (!/[.!?:]["”]?$/.test(t) && Math.abs(t.length - vivoUltimo.length) < 60) return;
+    vivoTimer = setTimeout(analisarVivo, Math.max(VIVO_PAUSA, vivoQuando + VIVO_INTERVALO - Date.now()));
+  };
+  const analisarVivo = async () => {
+    if (vivoCtrl || !folha.isConnected) return;
+    const t = paraLivre(area.value);
+    vivoCtrl = new AbortController();
+    vivoErro = '';
+    pintarStatus();
+    const ctrl = vivoCtrl;
+    const limite = setTimeout(() => ctrl.abort(), 90000);
+    try {
+      const txt = await chamarIA(iaAtual(), SISTEMA_VIVO(), pedidoVivo(R.tema, t), [], { signal: ctrl.signal, max: 5000, esforco: 'low', json: true, etapa() {}, texto() {}, nota() {} });
+      if (txt === null) throw new Error('a IA preferiu não responder');
+      vivoMarcas = lerMarcasVivo(txt);
+      red.vivoMarcas = vivoMarcas.map(({ pos, ...m }) => m);
+      red.vivoTexto = t;
+      salvarRed();
+    } catch (e) {
+      vivoErro = ctrl.signal.aborted ? 'demorou demais' : String(e.message || e).slice(0, 80);
+    } finally {
+      clearTimeout(limite);
+      vivoCtrl = null;
+      vivoUltimo = t;
+      vivoQuando = Date.now();
+    }
+    if (!folha.isConnected) return;
+    desenharFundo();
+    pintarStatus();
+    agendarVivo();   // o texto pode ter mudado enquanto a IA lia
+  };
+  // comentário do trecho onde está o cursor (ao clicar ou andar com as setas)
+  const mostrarVivo = () => {
+    fundo.querySelectorAll('mark.sel').forEach(x => x.classList.remove('sel'));
+    if (!red.vivo) { painelVivo.hidden = true; return; }
+    const c = area.selectionStart;
+    const ks = vivoMarcas.map((m, k) => (m.pos && m.pos[0] <= c && c <= m.pos[1] ? k : -1)).filter(k => k >= 0);
+    if (!ks.length) { painelVivo.hidden = true; return; }
+    fundo.querySelectorAll('mark.m').forEach(x => { if (x.dataset.ms.split(',').some(k => ks.includes(+k))) x.classList.add('sel'); });
+    painelVivo.innerHTML = '<button class="vivo-fechar" type="button" aria-label="Fechar">✕</button><i class="vivo-seta"></i>' + ks.map(k => {
+      const m = vivoMarcas[k];
+      const aplica = m.sugestao && m.nivel >= 3 ? `<button class="btn mini" type="button" data-aplicar="${k}">Aplicar sugestão</button>` : '';
+      return cartaoMarca(m, k).replace(/<\/div>\s*$/, `${aplica}</div>`);
+    }).join('');
+    painelVivo.hidden = false;
+    painelVivo.querySelector('.vivo-fechar').addEventListener('click', fecharVivo);
+    // janelinha logo acima do trecho (ou logo abaixo, se não couber acima na tela), com a setinha apontando para ele
+    const alvo = fundo.querySelector('mark.m.sel');
+    if (alvo) {
+      const corpo = painelVivo.parentElement.getBoundingClientRect();
+      const r = alvo.getBoundingClientRect();
+      const pw = painelVivo.offsetWidth, ph = painelVivo.offsetHeight;
+      const centro = r.left - corpo.left + r.width / 2;
+      const left = Math.max(4, Math.min(corpo.width - pw - 4, centro - pw / 2));
+      const topo = document.querySelector('.topo')?.offsetHeight || 0;
+      const acima = r.top - ph - 12 >= topo + 4;
+      painelVivo.classList.toggle('embaixo', !acima);
+      painelVivo.style.left = `${left}px`;
+      painelVivo.style.top = `${acima ? r.top - corpo.top - ph - 10 : r.bottom - corpo.top + 10}px`;
+      painelVivo.querySelector('.vivo-seta').style.left = `${Math.max(14, Math.min(pw - 14, centro - left))}px`;
+    }
+    painelVivo.querySelectorAll('[data-aplicar]').forEach(b => b.addEventListener('click', () => {
+      const m = vivoMarcas[+b.dataset.aplicar];
+      if (!m?.pos) return;
+      area.focus();
+      area.setSelectionRange(m.pos[0], m.pos[1]);
+      if (!document.execCommand('insertText', false, m.sugestao)) {
+        area.setRangeText(m.sugestao, m.pos[0], m.pos[1], 'end');
+        area.dispatchEvent(new Event('input'));
+      }
+      vivoMarcas = vivoMarcas.filter(x => x !== m);
+      red.vivoMarcas = vivoMarcas.map(({ pos, ...x }) => x);
+      salvarRed();
+      desenharFundo();
+      pintarStatus();
+    }));
+  };
+  function fecharVivo() {
+    painelVivo.hidden = true;
+    fundo.querySelectorAll('mark.sel').forEach(x => x.classList.remove('sel'));
+  }
+  area.addEventListener('click', mostrarVivo);
+  area.addEventListener('keyup', e => { if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') mostrarVivo(); });
+  area.addEventListener('keydown', e => { if (e.key === 'Escape' && !painelVivo.hidden) fecharVivo(); });
+  // clicar fora da janelinha (e fora da folha) fecha
+  const foraVivo = e => { if (!painelVivo.hidden && !painelVivo.contains(e.target) && e.target !== area) fecharVivo(); };
+  document.addEventListener('pointerdown', foraVivo);
+  aoSair(() => document.removeEventListener('pointerdown', foraVivo));
+  g('red-vivo').addEventListener('change', e => {
+    red.vivo = e.target.checked;
+    salvarRed();
+    folha.classList.toggle('vivo', red.vivo);
+    painelVivo.hidden = true;
+    if (red.vivo) { vivoUltimo = ''; agendarVivo(); } else { clearTimeout(vivoTimer); vivoCtrl?.abort(); }
+    desenharFundo();
+    pintarStatus();
+  });
+  const relogioVivo = setInterval(() => { if (red.vivo && vivoQuando && !vivoCtrl) pintarStatus(); }, 10000);
+  area.addEventListener('input', () => {
+    R.texto = area.value; salvarRed(); medirFolha();
+    desenharFundo();
+    painelVivo.hidden = true;
+    agendarVivo();
+  });
+  const ro = new ResizeObserver(() => medirFolha());
+  ro.observe(folha);
+  aoSair(() => { ro.disconnect(); clearTimeout(vivoTimer); clearInterval(relogioVivo); vivoCtrl?.abort(); });
+  medirFolha();
+  desenharFundo();
+  pintarStatus();
+  agendarVivo();
+  g('red-tema').addEventListener('input', e => { R.tema = e.target.value; salvarRed(); });
+  g('red-texto').addEventListener('input', e => { R.texto = e.target.value; salvarRed(); conta(); });
+  const mudarModo = modo => {
+    if (modo === R.modo) return;
+    if (modo === 'folha' && R.modo === 'livre') area.value = paraFolha(g('red-texto').value);
+    if (modo === 'livre' && R.modo === 'folha') g('red-texto').value = paraLivre(area.value);
+    if (modo !== 'foto') R.texto = modo === 'folha' ? area.value : g('red-texto').value;
+    R.modo = modo; salvarRed();
+    $app.querySelectorAll('[data-modo]').forEach(x => x.classList.toggle('on', (x.dataset.modo === 'foto') === (modo === 'foto')));
+    $app.querySelectorAll('[data-painel]').forEach(p => { p.hidden = p.dataset.painel !== modo; });
+    if (modo === 'folha') medirFolha(); else if (modo === 'livre') conta();
+  };
+  $app.querySelectorAll('[data-modo]').forEach(b => b.addEventListener('click', () => mudarModo(b.dataset.modo)));
+  $app.querySelectorAll('[data-livre]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); mudarModo(a.dataset.livre === '1' ? 'livre' : 'folha'); }));
+  // lógica da correção numa janela
+  const dlg = g('red-logica');
+  $app.querySelector('[data-logica]').addEventListener('click', () => dlg.showModal());
+  dlg.querySelector('[data-fechar-logica]').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });   // clique fora fecha
+  // desafio dos anos: tocar num ano abre o tema e as referências; "Escrever" leva o tema para a folha
+  const abrirAno = a => {
+    $app.querySelectorAll('.ano').forEach(b => b.classList.toggle('sel', +b.dataset.ano === a));
+    g('ano-detalhe').innerHTML = anoDetalheHTML(a);
+    g('ano-detalhe').querySelector('[data-escrever]').addEventListener('click', () => {
+      const tema = TEMAS_ENEM.find(x => x[0] === a)[1];
+      if (paragrafos(R.texto).length && normTema(R.tema) !== normTema(tema) && !confirm('Trocar o tema? O texto que está na folha continua lá.')) return;
+      R.tema = tema; g('red-tema').value = tema; salvarRed();
+      mudarModo(R.modo === 'foto' ? 'foto' : 'folha');
+      g('red-tema').closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+  $app.querySelectorAll('.ano').forEach(b => b.addEventListener('click', () => abrirAno(+b.dataset.ano)));
+  { const a = anoDoTema(R.tema); if (a) abrirAno(a); }
+  const desenharFotos = () => {
+    g('red-fotos').innerHTML = fotosRed.map((f, k) => `<div class="red-foto"><img src="${f.url}" alt="Foto ${k + 1} da redação"><button class="btn mini" type="button" data-tirar="${k}">Remover</button></div>`).join('');
+    g('red-fotos').querySelectorAll('[data-tirar]').forEach(b => b.addEventListener('click', () => { URL.revokeObjectURL(fotosRed[+b.dataset.tirar].url); fotosRed.splice(+b.dataset.tirar, 1); desenharFotos(); }));
+  };
+  desenharFotos();
+  g('red-foto').addEventListener('change', async e => {
+    for (const f of [...e.target.files].slice(0, 3 - fotosRed.length)) {
+      try { fotosRed.push(await prepararFoto(f)); } catch (err) { alert(err.message); }
+    }
+    e.target.value = '';
+    desenharFotos();
+  });
+  g('red-enviar').addEventListener('click', () => corrigirRedacao(g('red-ia'), g('red-enviar')));
+}
+
+function faixaNota(res) {
+  const a = notaTotal(res, 'pessimista'), b = notaTotal(res, 'otimista');
+  return a === b ? `${a}` : `${a}–${b}`;
+}
+
+function guiaHTML() {
+  const sec = (titulo, corpo, aberta = false) => `<details class="logica-sec" ${aberta ? 'open' : ''}><summary>${titulo}</summary><div class="logica-corpo">${corpo}</div></details>`;
+  return `<dialog class="logica-red" id="red-logica" aria-label="Como a correção funciona">
+    <div class="logica-topo"><h2>Como a correção funciona</h2><button class="btn mini" type="button" data-fechar-logica>Fechar ✕</button></div>
+    ${sec('A nota', `<p>Cinco competências de 0 a 200, em degraus de 40; a nota é a soma (até 1000). A IA dá um <b>cenário pessimista</b> (corretor rigoroso) e um <b>otimista</b> (corretor generoso) — a nota real costuma ficar entre os dois. Sem tema informado, a IA deduz pelo texto, mas aí não dá para saber se você tangenciou.</p>`, true)}
+    ${sec('As cores dos trechos', `<p>${[1, 2, 3, 4, 5, 0].map(n => `<span class="m n${n}">${NIVEIS_RED[n][0]}</span> ${esc(NIVEIS_RED[n][1])}`).join('<br>')}</p><p>Erros de ortografia, acentuação, crase, concordância e pontuação são grifados no ponto exato, junto com o resto. Cada trecho tem a explicação e, quando dá, como ficaria melhor.</p>`)}
+    ${sec('As 5 competências', `<ul class="lista red-comps">${GUIA.competencias.map(c => `<li><details><summary><span class="tit">C${c.n} · ${esc(c.nome)}</span></summary>
+      <p class="small" style="margin:6px 0">${esc(c.o_que)}</p>
+      <table class="tabela-dias red-niveis">${Object.entries(c.niveis).sort((x, y) => y[0] - x[0]).map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</table></details></li>`).join('')}</ul>`)}
+    ${sec('O que zera a redação', `<ul class="red-zeram">${GUIA.zeram.map(z => `<li>${esc(z)}</li>`).join('')}</ul>`)}
+    ${sec('O que as notas 1000 têm em comum', `<ul class="lista red-comps">${GUIA.licoes.map(l => `<li><details><summary><span class="tit">${esc(l.titulo)}</span></summary><p class="small" style="margin:6px 0">${esc(l.texto)}</p></details></li>`).join('')}</ul><p>A IA usa essas lições como régua do que é “excelente”; nos temas do Desafio dos anos, usa também as redações reais nota 980–1000 daquele tema.</p>`)}
+    ${sec('Folha, foto e tempo real', `<p><b>Folha:</b> 30 linhas como a oficial; cada linha comporta o mesmo que uma linha das redações nota 1000 (em média ${GUIA.media?.palavras || 466} palavras no texto todo). Enter começa parágrafo com recuo; sem corretor ortográfico, como na prova.</p><p><b>Foto:</b> a IA transcreve sua letra; leituras duvidosas só contam como erro no cenário pessimista.</p><p><b>Tempo real:</b> enquanto você escreve, a IA grifa trechos na folha (no máximo uma leitura a cada 40 s). Clique num trecho colorido para ver o comentário.</p>`)}
+    ${sec('Desafio dos anos e cronograma', `<p>Meta: 900+ (média dos dois cenários) no tema de cada ENEM desde 2010. O cronograma marca as redações necessárias para fechar os 16 temas em até 1 ano (hoje ~2 por mês), no lugar das questões do dia — ou num dia híbrido, se você estiver atrasado nas questões.</p>`)}
+  </dialog>`;
+}
+
+const SISTEMA_RED = () => `Você é um corretor experiente da banca de redação do ENEM, treinado na matriz do INEP. Corrige com rigor e com a didática de um bom professor de cursinho: diz o que está bom, o que está errado, por quê e como ficaria melhor. Escreve em português do Brasil, falando direto com o estudante ("você").
+
+${GUIA.criterio()}`;
+
+// redações reais nota 980–1000 do mesmo tema, como régua do que é excelente naquele tema
+function refsDoTema(tema) {
+  const a = anoDoTema(tema);
+  const refs = REFS.anos.find(x => x.ano === a)?.redacoes || [];
+  if (!refs.length) return '';
+  return `REFERÊNCIA: redações reais que tiraram 980–1000 neste mesmo tema (ENEM ${a}), resumidas. Use como régua do que é excelente aqui — o estudante não precisa usar os mesmos repertórios nem a mesma estrutura:\n`
+    + refs.map(r => `- ${r.nota}: introdução: ${r.introducao}; argumentos: ${(r.argumentos || []).join(' / ')}; proposta: ${r.proposta}`).join('\n') + '\n';
+}
+function pedidoRed(tema, modo) {
+  return [
+    refsDoTema(tema),
+    tema ? `TEMA DA PROPOSTA: "${tema}"` : 'TEMA: o estudante não informou. Deduza o tema provável pelo texto, diga qual foi em "tema_usado" e avise no "resumo" que a C2 depende do tema real.',
+    modo === 'foto'
+      ? 'A redação está na(s) FOTO(S) anexada(s), escrita à mão. Primeiro transcreva o texto EXATAMENTE como está escrito (inclusive com os erros do estudante — não corrija nada na transcrição), separando parágrafos com \\n. Onde não tiver certeza da leitura de uma palavra, escreva a leitura mais provável e crie uma marcação com nivel 0 e tipo "leitura" para ela. Se uma palavra parece errada mas pode ser só a letra difícil de ler, marque como nivel 0 (não como erro).'
+      : 'A redação foi digitada pelo estudante e está abaixo, entre <redacao> e </redacao>. Não a repita: deixe "transcricao" como "".',
+    '',
+    'Devolva SOMENTE um objeto JSON válido (sem ``` e sem texto fora dele), neste formato:',
+    `{
+  "transcricao": "texto completo transcrito da foto, ou \\"\\" se foi digitado",
+  "tema_usado": "tema considerado na correção",
+  "anulada": null,
+  "marcacoes": [
+    { "trecho": "cópia EXATA de um pedaço do texto", "nivel": 1, "tipo": "repertorio", "comp": 2,
+      "titulo": "rótulo curto, até 6 palavras", "explicacao": "por que esse trecho funciona ou por que é um problema (1 a 3 frases)",
+      "sugestao": "como o trecho ficaria melhor reescrito (vazio se nivel 1 ou 2)", "busca": "termo de busca para uma aula no YouTube sobre isso (vazio se não precisar)" }
+  ],
+  "competencias": [ { "n": 1, "pessimista": 120, "otimista": 160, "comentario": "2 a 3 frases justificando a faixa" } ],
+  "resumo": "3 a 4 frases: o retrato geral da redação e o que mais faria a nota subir",
+  "fortes": ["pontos fortes, frases curtas"],
+  "estudar": [ { "titulo": "o que estudar", "porque": "por que isso é prioridade para você", "busca": "termo de busca no YouTube" } ],
+  "portugues": [ { "regra": "a regra de português, explicada em 1 frase", "errado": "como você escreveu", "certo": "como fica certo", "busca": "termo de busca no YouTube" } ]
+}`,
+    '',
+    'REGRAS DAS MARCAÇÕES:',
+    '- "trecho" tem que ser uma cópia literal (mesmas letras, acentos e pontuação) de um pedaço do texto, para eu conseguir grifar. Prefira trechos curtos: de uma palavra até uma frase. Se a palavra se repete no texto, inclua 2 ou 3 palavras vizinhas para identificar o lugar certo.',
+    '- "nivel": 1 = excelente (nível nota 1000), 2 = bom, 3 = pode melhorar (não é erro, mas outra forma renderia mais pontos), 4 = problema (provavelmente custa ponto), 5 = erro grave (custa ponto com certeza)' + (modo === 'foto' ? ', 0 = leitura duvidosa da foto.' : '.'),
+    '- "tipo": ortografia, acentuacao, gramatica, pontuacao, crase, concordancia, regencia, coesao, repertorio, argumentacao, tese, proposta, estrutura, vocabulario, tema' + (modo === 'foto' ? ', leitura.' : '.'),
+    '- "comp": a competência (1 a 5) afetada.',
+    '- TODO erro de ortografia, acentuação, crase, concordância, regência e pontuação vira uma marcação própria no ponto exato em que acontece (trecho = a palavra ou expressão errada), com a forma correta em "sugestao".',
+    '- Marque também o que está bom (níveis 1 e 2): tese, repertório bem usado, conectivos, proposta. Uma redação boa deve ter várias marcações verdes.',
+    '- Para os trechos que podem melhorar (3, 4, 5), a "sugestao" é a reescrita completa do trecho, e a "explicacao" diz por que a nova versão funciona melhor.',
+    '- Avalie a proposta de intervenção apontando quais dos 5 elementos (agente, ação, meio, finalidade, detalhamento) aparecem e quais faltam.',
+    '- Faça de 12 a 35 marcações, na ordem em que aparecem no texto.',
+    '',
+    'REGRAS DA NOTA:',
+    '- Cada competência só pode valer 0, 40, 80, 120, 160 ou 200. Dê as 5 competências, sempre com pessimista <= otimista.',
+    '- Pessimista = um corretor rigoroso; otimista = um corretor generoso. A diferença costuma ser de 0 a 40 por competência (80 se houver dúvida real).' + (modo === 'foto' ? ' As leituras duvidosas (nivel 0) só contam como erro no cenário pessimista.' : ''),
+    '- Se algo zera a redação inteira (fuga total ao tema, não ser dissertativo-argumentativo, até 7 linhas, parte desconectada), coloque o motivo em "anulada" e notas 0.',
+    '',
+    'REGRAS DO QUE ESTUDAR:',
+    '- "estudar": 3 a 5 itens, do que mais aumenta a nota para o que menos. "portugues": uma dica para cada tipo de erro de português que apareceu (até 6). Pode ficar vazio se não houver erros.',
+    '- "busca": termo curto e específico em português para achar uma aula boa no YouTube (ex.: "crase antes de palavra feminina regra", "proposta de intervenção 5 elementos ENEM", "repertório sociocultural produtivo redação ENEM"). Não invente links nem nomes de vídeos.',
+  ].join('\n');
+}
+
+// correção em tempo real: pedido curto, só marcações, sobre um texto que ainda está sendo escrito
+const SISTEMA_VIVO = () => `Você é um corretor da redação do ENEM acompanhando um estudante ENQUANTO ele escreve, como um professor olhando por cima do ombro. Aponta erros de português na hora, sugere formas melhores e reconhece o que está bom. Escreve em português do Brasil, falando com o estudante ("você"), em frases curtas.
+
+COMPETÊNCIAS:
+${GUIA.competencias.map(c => `C${c.n} ${c.nome}: ${c.o_que}`).join('\n')}`;
+function pedidoVivo(tema, texto) {
+  return [
+    tema ? `TEMA: "${tema}"` : 'TEMA: não informado.',
+    'O estudante AINDA ESTÁ ESCREVENDO. Texto até agora:',
+    `<redacao>\n${texto}\n</redacao>`,
+    '',
+    'Devolva SOMENTE um JSON válido: {"marcacoes": [ { "trecho": "...", "nivel": 3, "tipo": "...", "comp": 1, "titulo": "...", "explicacao": "...", "sugestao": "..." } ]}',
+    '- "trecho": cópia literal (mesmas letras, acentos e pontuação) de um pedaço do texto; curto (de uma palavra a uma frase). Se a palavra se repete, inclua as vizinhas para achar o lugar certo.',
+    '- "nivel": 1 = excelente, 2 = bom, 3 = pode melhorar, 4 = problema, 5 = erro grave.',
+    '- "tipo": ortografia, acentuacao, gramatica, pontuacao, crase, concordancia, regencia, coesao, repertorio, argumentacao, tese, proposta, estrutura, vocabulario ou tema. "comp": a competência (1 a 5).',
+    '- "titulo": até 5 palavras. "explicacao": 1 ou 2 frases. "sugestao": como o trecho fica melhor, pronto para substituir o trecho (vazio nos níveis 1 e 2).',
+    '- No máximo 15 marcações, na ordem do texto. TODO erro de ortografia, acentuação, crase, concordância, regência e pontuação vira marcação. Depois: frases confusas, repetições, conectivos, informalidade, repertório sem explicação, tese. Inclua 1 a 3 trechos bons (níveis 1 ou 2).',
+    '- Ignore a última frase se ela parecer incompleta. Não aponte o que ainda não foi escrito (por exemplo, a falta de conclusão).',
+  ].join('\n');
+}
+function lerMarcasVivo(txt) {
+  let j;
+  try { j = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); } catch { throw new Error('resposta em formato inesperado'); }
+  return (Array.isArray(j.marcacoes) ? j.marcacoes : []).filter(m => m && m.trecho).slice(0, 20).map(m => ({
+    trecho: String(m.trecho), nivel: Math.max(1, Math.min(5, Math.round(+m.nivel || 3))), tipo: String(m.tipo || ''), comp: +m.comp || 0,
+    titulo: String(m.titulo || ''), explicacao: String(m.explicacao || ''), sugestao: String(m.sugestao || ''), busca: '',
+  }));
+}
+
+// tira o JSON da resposta (às vezes vem com ``` ou texto em volta) e confere os campos
+function lerCorrecao(txt, modo) {
+  let j;
+  try {
+    const a = txt.indexOf('{'), b = txt.lastIndexOf('}');
+    j = JSON.parse(txt.slice(a, b + 1));
+  } catch { const e = new Error('a resposta não é um JSON válido'); e.formato = true; throw e; }
+  if (!Array.isArray(j.competencias) || !Array.isArray(j.marcacoes)) { const e = new Error('faltam "competencias" ou "marcacoes" na resposta'); e.formato = true; throw e; }
+  const degrau = v => Math.max(0, Math.min(200, Math.round((+v || 0) / 40) * 40));
+  const comps = [1, 2, 3, 4, 5].map(n => {
+    const c = j.competencias.find(x => +x.n === n) || {};
+    let p = degrau(c.pessimista), o = degrau(c.otimista ?? c.pessimista);
+    if (p > o) [p, o] = [o, p];
+    return { n, pessimista: p, otimista: o, comentario: String(c.comentario || '') };
+  });
+  const lista = x => (Array.isArray(x) ? x : []);
+  return {
+    transcricao: modo === 'foto' ? String(j.transcricao || '').replace(/\r\n?/g, '\n').replace(/\\n/g, '\n') : '',
+    tema_usado: String(j.tema_usado || ''),
+    anulada: j.anulada ? String(j.anulada) : null,
+    marcacoes: lista(j.marcacoes).filter(m => m && m.trecho).map(m => ({
+      trecho: String(m.trecho), nivel: Math.max(0, Math.min(5, Math.round(+m.nivel || 0))) || (m.tipo === 'leitura' ? 0 : 3),
+      tipo: String(m.tipo || ''), comp: +m.comp || 0, titulo: String(m.titulo || ''), explicacao: String(m.explicacao || ''),
+      sugestao: String(m.sugestao || ''), busca: String(m.busca || ''),
+    })),
+    competencias: comps,
+    resumo: String(j.resumo || ''),
+    fortes: lista(j.fortes).map(String),
+    estudar: lista(j.estudar).filter(x => x && x.titulo).map(x => ({ titulo: String(x.titulo), porque: String(x.porque || ''), busca: String(x.busca || x.titulo) })),
+    portugues: lista(j.portugues).filter(x => x && x.regra).map(x => ({ regra: String(x.regra), errado: String(x.errado || ''), certo: String(x.certo || ''), busca: String(x.busca || x.regra) })),
+  };
+}
+
+let corrigindo = false;
+async function corrigirRedacao(el, botao) {
+  const R = red.rascunho;
+  const modo = R.modo === 'foto' ? 'foto' : 'texto';
+  const texto = paraLivre((R.texto || '').replace(/\r\n?/g, '\n'));
+  if (!chaveIA()) { el.innerHTML = '<p class="aviso">Para corrigir, escolha a IA e coloque sua chave de API em <a href="#/ajustes">Ajustes</a> (Claude, Gemini ou ChatGPT).</p>'; return; }
+  if (location.protocol === 'file:') { el.innerHTML = '<p class="aviso">Abra o app pelo <b>INICIAR.bat</b> (servidor local) para usar a correção.</p>'; return; }
+  if (modo === 'texto' && contarRed(texto).palavras < 30) { el.innerHTML = '<p class="aviso">Escreva a redação primeiro (o texto está muito curto para corrigir).</p>'; return; }
+  if (modo === 'foto' && !fotosRed.length) { el.innerHTML = '<p class="aviso">Tire ou escolha a foto da folha primeiro.</p>'; return; }
+  if (corrigindo) return;
+  corrigindo = true;
+  botao.disabled = true;
+  const tema = (R.tema || '').trim();
+  const fotos = modo === 'foto' ? fotosRed.map(({ data, mime }) => ({ data, mime })) : [];
+  try {
+    await rodarIA(el, {
+      sistema: SISTEMA_RED(),
+      pedido: pedidoRed(tema, modo) + (modo === 'texto' ? `\n\n<redacao>\n${texto}\n</redacao>` : ''),
+      imgsDe: async () => fotos,
+      etapa0: modo === 'foto' ? 'Preparando as fotos' : 'Preparando o texto',
+      limite: 300, max: 20000, json: true,
+      parcial: t => `<p class="small muted">Escrevendo a correção… ${(t.match(/"trecho"/g) || []).length} trechos analisados até agora.</p>`,
+      processar: t => lerCorrecao(t, modo),
+      aoTerminar: res => {
+        const item = { id: Date.now().toString(36), data: new Date().toISOString(), tema: tema || res.tema_usado, modo, texto: modo === 'foto' ? res.transcricao : texto, res };
+        red.hist.unshift(item);
+        red.hist = red.hist.slice(0, 40);
+        salvarRed();
+        el.dataset.id = item.id;
+      },
+      mostrar: () => { location.hash = '#/redacao/' + el.dataset.id; },
+      tentarDeNovo: () => corrigirRedacao(el, botao),
+    });
+  } finally {
+    corrigindo = false;
+    if (botao.isConnected) botao.disabled = false;
+  }
+}
+
+// acha o trecho no texto a partir de "desde"; tolera espaços, aspas e travessões diferentes e maiúsculas
+function acharTrecho(texto, trecho, desde) {
+  const t = trecho.trim();
+  if (!t) return null;
+  let i = texto.indexOf(t, desde);
+  if (i < 0) i = texto.indexOf(t);
+  if (i >= 0) return [i, i + t.length];
+  const fonte = t.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/["“”]/g, '["“”]').replace(/['‘’]/g, "['‘’]").replace(/[-–—]/g, '[-–—]')).join('\\s+');
+  for (const de of [desde, 0]) {
+    const re = new RegExp(fonte, 'giu');
+    re.lastIndex = de;
+    const m = re.exec(texto);
+    if (m) return [m.index, m.index + m[0].length];
+  }
+  return null;
+}
+
+// texto com os trechos grifados. Marcações podem se sobrepor (uma palavra errada dentro de uma frase boa):
+// o texto é cortado em pedaços e cada pedaço leva a cor da marcação mais interna (a mais curta).
+function textoMarcado(texto, marcas, numeros = true) {
+  const spans = [];
+  let desde = 0;
+  marcas.forEach((m, k) => {
+    const p = acharTrecho(texto, m.trecho, desde);
+    m.pos = p;
+    if (p) { spans.push({ a: p[0], b: p[1], k }); desde = p[0]; }
+  });
+  const cortes = [...new Set([0, texto.length, ...spans.flatMap(s => [s.a, s.b])])].sort((x, y) => x - y);
+  let html = '';
+  for (let c = 0; c < cortes.length - 1; c++) {
+    const a = cortes[c], b = cortes[c + 1];
+    const pedaco = esc(texto.slice(a, b));
+    const cobre = spans.filter(s => s.a <= a && s.b >= b);
+    if (!cobre.length) { html += pedaco; continue; }
+    cobre.sort((x, y) => (x.b - x.a) - (y.b - y.a));
+    const ks = cobre.map(s => s.k);
+    const fim = numeros ? spans.filter(s => s.b === b && cobre.includes(s)).map(s => `<sup>${s.k + 1}</sup>`).join('') : '';
+    html += `<mark class="m n${marcas[ks[0]].nivel}" data-ms="${ks.join(',')}"${numeros ? ' tabindex="0"' : ''}>${pedaco}${fim}</mark>`;
+  }
+  return html;
+}
+
+function cartaoMarca(m, k) {
+  const [nome] = NIVEIS_RED[m.nivel] || NIVEIS_RED[3];
+  return `<div class="red-marca n${m.nivel}" data-k="${k}">
+    <div class="red-marca-topo"><span class="red-num">${k + 1}</span><span class="red-nivel n${m.nivel}">${nome}</span>
+      <span class="small muted">${esc(TIPOS_RED[m.tipo] || m.tipo)}${m.comp ? ` · C${m.comp}` : ''}</span></div>
+    ${m.titulo ? `<b>${esc(m.titulo)}</b>` : ''}
+    <p class="red-trecho">“${esc(m.trecho)}”${m.pos ? '' : ' <span class="small muted">(não achei esse trecho exato no texto)</span>'}</p>
+    ${m.explicacao ? `<p>${esc(m.explicacao)}</p>` : ''}
+    ${m.sugestao && m.nivel !== 1 && m.nivel !== 2 ? `<p class="red-sugestao"><span class="small muted">${m.nivel === 0 ? 'Talvez seja' : 'Melhor assim'}:</span> ${esc(m.sugestao)}</p>` : ''}
+    ${m.busca ? `<a class="btn mini" href="${linkYT(m.busca)}" target="_blank" rel="noopener">▶ Aula: ${esc(m.busca)}</a>` : ''}
+  </div>`;
+}
+
+function verCorrecao(item) {
+  const res = item.res;
+  const texto = item.texto || '';
+  const marcas = res.marcacoes;
+  const pess = notaTotal(res, 'pessimista'), otim = notaTotal(res, 'otimista');
+  const corpo = textoMarcado(texto, marcas);
+  const contagem = [5, 4, 3, 2, 1, 0].map(n => [n, marcas.filter(m => m.nivel === n).length]).filter(([, q]) => q);
+  $app.classList.add('larga');
+  $app.innerHTML = `
+    <p><a href="#/redacao">← Redação</a></p>
+    <h1>${esc(item.tema || res.tema_usado || 'Redação')}</h1>
+    <p class="muted small">${new Date(item.data).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} · ${item.modo === 'foto' ? 'enviada por foto' : 'enviada como texto'} · ${contarRed(texto).linhas} linhas aprox.</p>
+    <div class="red-layout">
+      <div class="red-principal">
+        <section class="card destaque red-nota">
+          ${res.anulada ? `<p class="aviso"><b>Redação zerada:</b> ${esc(res.anulada)}</p>` : ''}
+          <div class="red-nota-topo">
+            <div><span class="small muted">Cenário pessimista</span><b class="n-pess">${pess}</b></div>
+            <div class="red-faixa" title="de ${pess} a ${otim}"><i style="left:${pess / 10}%;width:${Math.max(0.8, (otim - pess) / 10)}%"></i><span style="left:0">0</span><span style="left:50%">500</span><span style="left:100%">1000</span></div>
+            <div><span class="small muted">Cenário otimista</span><b class="n-otim">${otim}</b></div>
+          </div>
+          <p class="small muted" style="margin:6px 0 10px">Pessimista = corretor rigoroso${item.modo === 'foto' ? ', contando como erro as leituras duvidosas da foto' : ''}. Otimista = corretor generoso. Na prova, a nota final é a média de dois corretores.</p>
+          <table class="red-comps-tab">${res.competencias.map(c => {
+            const nome = GUIA.competencias[c.n - 1]?.nome || '';
+            return `<tr><th>C${c.n}<span class="small muted"> ${esc(nome)}</span></th>
+              <td class="red-mini"><span class="barra"><i style="margin-left:${c.pessimista / 2}%;width:${Math.max(1.5, (c.otimista - c.pessimista) / 2)}%"></i></span></td>
+              <td class="num">${c.pessimista === c.otimista ? c.pessimista : `${c.pessimista}–${c.otimista}`}</td></tr>
+              ${c.comentario ? `<tr class="coment"><td colspan="3">${esc(c.comentario)}</td></tr>` : ''}`;
+          }).join('')}</table>
+          ${res.resumo ? `<p style="margin:12px 0 0">${esc(res.resumo)}</p>` : ''}
+          ${anoDoTema(item.tema) ? `<p class="small" style="margin:12px 0 0">🏅 Desafio dos anos — ENEM ${anoDoTema(item.tema)}: esta redação vale <b>${notaMedia(res)}</b> (média dos cenários). ${notaMedia(res) >= 900 ? 'Ano conquistado!' : `Faltam ${900 - notaMedia(res)} para 900.`} <a href="#/redacao">Ver referências do tema</a></p>` : ''}
+        </section>
+
+        <section class="card">
+          <div class="titulo-linha"><h2>Seu texto corrigido</h2><span class="small muted">toque num trecho grifado</span></div>
+          <div class="red-legenda">${contagem.map(([n, q]) => `<button class="red-filtro on" data-nivel="${n}" type="button"><span class="m n${n}">${NIVEIS_RED[n][0]}</span> ${q}</button>`).join('')}</div>
+          ${item.modo === 'foto' ? '<p class="small muted" style="margin:0 0 8px">Este é o texto que a IA leu na foto. Se ela leu alguma palavra errado, use “Conferir a transcrição” lá embaixo, arrume e reenvie.</p>' : ''}
+          <div class="red-texto" id="red-corpo">${corpo || '<p class="muted">(texto vazio)</p>'}</div>
+        </section>
+
+        <section class="card"><h2>Todas as marcações</h2><div class="red-lista" id="red-lista">${marcas.map(cartaoMarca).join('') || '<p class="muted">Nenhuma marcação.</p>'}</div></section>
+
+        ${res.fortes.length ? `<section class="card"><h2>Pontos fortes</h2><ul class="red-pontos">${res.fortes.map(f => `<li>${esc(f)}</li>`).join('')}</ul></section>` : ''}
+
+        ${res.estudar.length ? `<section class="card"><h2>O que estudar para subir a nota</h2><ol class="red-estudar">${res.estudar.map(x => `<li><b>${esc(x.titulo)}</b>
+          ${x.porque ? `<p class="small" style="margin:2px 0 6px">${esc(x.porque)}</p>` : ''}
+          <a class="btn mini" href="${linkYT(x.busca)}" target="_blank" rel="noopener">▶ Aulas no YouTube: ${esc(x.busca)}</a></li>`).join('')}</ol></section>` : ''}
+
+        ${res.portugues.length ? `<section class="card"><h2>Dicas de português</h2><div class="red-port">${res.portugues.map(x => `<div class="red-dica">
+          <p style="margin:0 0 6px">${esc(x.regra)}</p>
+          ${x.errado || x.certo ? `<p class="small" style="margin:0 0 8px">${x.errado ? `<span class="red-errado">${esc(x.errado)}</span>` : ''}${x.errado && x.certo ? ' → ' : ''}${x.certo ? `<span class="red-certo">${esc(x.certo)}</span>` : ''}</p>` : ''}
+          <a class="btn mini" href="${linkYT(x.busca)}" target="_blank" rel="noopener">▶ ${esc(x.busca)}</a></div>`).join('')}</div></section>` : ''}
+
+        <section class="card">
+          <div class="linha-btns" style="margin-top:0">
+            <button class="btn" data-acao="reescrever" type="button">${item.modo === 'foto' ? '✍️ Conferir a transcrição e reenviar' : '✍️ Reescrever e corrigir de novo'}</button>
+            <button class="btn perigo" data-acao="apagar" type="button">Apagar esta correção</button>
+          </div>
+          <p class="small muted" style="margin:8px 0 0">A nota é uma estimativa da IA, não a nota oficial. Use as faixas para ver a tendência entre uma redação e outra.</p>
+        </section>
+      </div>
+      <aside class="red-painel" id="red-painel" hidden></aside>
+    </div>
+  `;
+  const painel = document.getElementById('red-painel');
+  const abrir = ks => {
+    $app.querySelectorAll('mark.m.sel').forEach(x => x.classList.remove('sel'));
+    $app.querySelectorAll(`mark.m[data-ms="${ks.join(',')}"]`).forEach(x => x.classList.add('sel'));
+    painel.innerHTML = `<div class="red-painel-topo"><b>${ks.length > 1 ? `${ks.length} comentários neste trecho` : 'Comentário'}</b><button class="btn mini" type="button" data-fechar>Fechar ✕</button></div>${ks.map(k => cartaoMarca(marcas[k], k)).join('')}`;
+    painel.hidden = false;
+    painel.querySelector('[data-fechar]').addEventListener('click', () => { painel.hidden = true; $app.querySelectorAll('mark.m.sel').forEach(x => x.classList.remove('sel')); });
+  };
+  $app.querySelectorAll('#red-corpo mark.m').forEach(mk => {
+    const ks = mk.dataset.ms.split(',').map(Number);
+    mk.addEventListener('click', () => abrir(ks));
+    mk.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(ks); } });
+  });
+  // da lista para o texto
+  $app.querySelectorAll('#red-lista .red-marca').forEach(c => c.addEventListener('click', e => {
+    if (e.target.closest('a')) return;
+    const k = c.dataset.k;
+    const mk = [...$app.querySelectorAll('#red-corpo mark.m')].find(x => x.dataset.ms.split(',').includes(k));
+    if (!mk) return;
+    mk.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    abrir(mk.dataset.ms.split(',').map(Number));
+  }));
+  // filtros por nível: esconde a cor dos níveis desligados
+  $app.querySelectorAll('.red-filtro').forEach(b => b.addEventListener('click', () => {
+    b.classList.toggle('on');
+    document.getElementById('red-corpo').classList.toggle('sem-n' + b.dataset.nivel, !b.classList.contains('on'));
+    document.getElementById('red-lista').classList.toggle('sem-n' + b.dataset.nivel, !b.classList.contains('on'));
+  }));
+  $app.querySelector('[data-acao=reescrever]').addEventListener('click', () => {
+    red.rascunho = { tema: item.tema || '', texto: paraFolha(texto), modo: 'folha' };
+    salvarRed();
+    location.hash = '#/redacao';
+  });
+  $app.querySelector('[data-acao=apagar]').addEventListener('click', () => {
+    if (!confirm('Apagar esta correção do histórico?')) return;
+    red.hist = red.hist.filter(x => x.id !== item.id);
+    salvarRed();
+    location.hash = '#/redacao';
+  });
+}
+
+// ---------------------------------------------------------------- redação no cronograma
+// Quantas redações por mês: o necessário para tirar 900+ em todos os temas do desafio dos anos em até 1 ano
+// (ritmoAnos). A situação nas questões (ritmo das últimas 2 semanas × prazo para terminar) ajusta:
+//   adiantado (termina 2+ semanas antes) → +1 redação por mês, no lugar das questões do dia
+//   em dia (ou ainda sem histórico)       → no lugar das questões do dia
+//   atrasado                              → dia híbrido: redação + metade da meta de questões
+//   reta final (só revisão)               → pelo menos 1 por semana
+// As redações do mês se espalham igualmente pelo mês (no mês atual, pelos dias que restam), num dia de estudo. Redação perdida passa para o próximo
+// dia de estudo; "Adiar" pula o dia; redação feita antes conta para a próxima âncora do mês. A meta de questões
+// do cronograma é redistribuída: dia cheio de redação pesa 0 e dia híbrido pesa metade.
+const FATOR_RED = { cheia: 0, hibrida: 0.5 };
+red.feitas ||= [];
+red.adiadas ||= [];
+delete red.desafios;   // versão antiga guardava desafios de redação aqui
+red.adiadas = red.adiadas.filter(d => d >= somaDias(hoje(), -90));
+function situacaoQuestoes(h, fimNovas, previsao, ativos) {
+  if (h > fimNovas) return 'reta';
+  if (ativos < 3 || !previsao) return 'em dia';
+  if (previsao <= somaDias(fimNovas, -14)) return 'adiantado';
+  if (previsao > fimNovas) return 'atrasado';
+  return 'em dia';
+}
+// dias (AAAA-MM-DD) em que houve redação: correções feitas no app + "já fiz no papel"
+function diasComRedacao() {
+  const s = new Set(red.feitas);
+  for (const x of red.hist) s.add(iso(new Date(x.data)));
+  return s;
+}
+// Redações por mês para conquistar 900+ em todos os temas do desafio dos anos em até 1 ano (ou até a prova):
+// temas que faltam × tentativas esperadas por tema ÷ meses até o prazo. Adiantado nas questões: +1 por mês.
+const TENTATIVAS_900 = 1.5;   // redações esperadas por tema até passar de 900, contando reescritas
+function ritmoAnos(h, sit) {
+  const m = placarAnos();
+  const pend = TEMAS_ENEM.filter(([a]) => !(m[a] >= 900)).length;
+  const prazo = [somaDias(h, 365), somaDias(st.cfg.prova, -7)].sort()[0];
+  const meses = Math.max(1, diffDias(h, prazo) / 30.4);
+  // arredonda para o mais perto: se ficar para trás, os meses seguintes recalculam com os temas que faltam
+  let n = pend ? Math.round((pend * TENTATIVAS_900) / meses) : 1;
+  if (sit === 'adiantado') n += 1;
+  return { n: Math.min(6, Math.max(1, n)), pend, prazo };
+}
+function planoRedacao(h, fimNovas, P, previsao, ativos) {
+  const sit = situacaoQuestoes(h, fimNovas, previsao, ativos);
+  const feitas = diasComRedacao();
+  const mesH = h.slice(0, 7);
+  const feitasMes = [...feitas].filter(d => d.startsWith(mesH)).length;
+  if (st.cfg.redacao === false) return { sit, ligado: false, dias: new Map(), feitas, feitasMes, metaMes: 0, fator: () => 1, hoje: null, proxima: null, ritmo: null };
+  const prova = st.cfg.prova;
+  const adiadas = new Set(red.adiadas);
+  const ritmo = ritmoAnos(h, sit);
+  const nMes = mes => (`${mes}-15` > fimNovas ? Math.max(ritmo.n, 4) : ritmo.n);   // reta final: pelo menos 1 por semana
+  const tipoDe = d => (d <= fimNovas && sit === 'atrasado' ? 'hibrida' : 'cheia');
+  const metaMes = nMes(mesH);
+  const dias = new Map();
+  for (let ini = `${mesH}-01`, k = 0; ini < prova && k < 36; k++) {
+    const mes = ini.slice(0, 7);
+    const [a, m] = mes.split('-').map(Number);
+    const ultimo = iso(new Date(a, m, 0));
+    const q = nMes(mes);
+    let anc;
+    if (mes === mesH) {
+      // mês atual: as que faltam se espalham pelos dias que restam do mês
+      const faltam = Math.max(0, q - feitasMes), resto = diffDias(h, ultimo) + 1;
+      anc = Array.from({ length: faltam }, (_, i) => somaDias(h, Math.floor(((i + 0.5) * resto) / faltam)));
+    } else {
+      const dim = Number(ultimo.slice(8));
+      anc = Array.from({ length: q }, (_, i) => `${mes}-${String(Math.max(1, Math.round(((i + 0.5) * dim) / q))).padStart(2, '0')}`);
+    }
+    let ant = '';
+    for (const a0 of anc) {
+      let d = a0 < h ? h : a0;   // âncora que já passou sem redação: vai para hoje (ou o próximo dia de estudo)
+      if (d === h && feitas.has(h)) d = somaDias(h, 1);   // já fez uma hoje: a próxima não cai hoje
+      if (ant && d < somaDias(ant, 3)) d = somaDias(ant, 3);   // pelo menos 3 dias entre duas redações
+      while (d <= ultimo && d < prova && (!P[diaSemana(d)] || adiadas.has(d) || dias.has(d))) d = somaDias(d, 1);
+      if (d > ultimo || d >= prova) continue;
+      dias.set(d, tipoDe(d));
+      ant = d;
+    }
+    ini = somaDias(ultimo, 1);
+  }
+  // redação feita hoje que conta para a meta do mês: hoje vira dia de redação (as questões não voltam para hoje)
+  const hojeTipo = dias.get(h) || (feitas.has(h) && feitasMes <= metaMes ? tipoDe(h) : null);
+  const proxima = [...dias.keys()].filter(d => d > h).sort()[0] || null;
+  return {
+    sit, ligado: true, dias, feitas, feitasMes, metaMes, ritmo,
+    fator: d => (d === h ? (hojeTipo ? FATOR_RED[hojeTipo] : 1) : dias.has(d) ? FATOR_RED[dias.get(d)] : 1),
+    hoje: hojeTipo ? { tipo: hojeTipo, feita: feitas.has(h) } : null,
+    proxima: proxima ? { d: proxima, tipo: dias.get(proxima) } : null,
+  };
+}
+// tema para a redação do dia: o primeiro (de um rodízio mensal) que você ainda não usou
+// tema do dia de redação: primeiro os anos do desafio nunca tentados (do mais recente ao mais antigo), depois os
+// que ainda não passaram de 900 (do mais perto de 900); com o desafio completo, temas de treino
+function temaSugerido() {
+  const m = placarAnos();
+  const tentou = new Set(red.hist.map(x => anoDoTema(x.tema)).filter(Boolean));
+  const nunca = TEMAS_ENEM.find(([a]) => !tentou.has(a));
+  if (nunca) return nunca[1];
+  const falta = TEMAS_ENEM.filter(([a]) => !(m[a] >= 900)).sort((x, y) => (m[y[0]] || 0) - (m[x[0]] || 0));
+  if (falta.length) return falta[0][1];
+  const usados = new Set(red.hist.map(x => (x.tema || '').toLowerCase()));
+  const lista = [...(GUIA.temasTreino || []), ...TEMAS_ENEM.map(t => t[1])];
+  const k0 = Number(hoje().slice(5, 7)) * 3;
+  for (let i = 0; i < lista.length; i++) { const t = lista[(k0 + i) % lista.length]; if (!usados.has(t.toLowerCase())) return t; }
+  return lista[k0 % lista.length] || '';
+}
+function abrirRedacaoDoDia() {
+  const R = red.rascunho;
+  if (!paragrafos(R.texto).length) { R.tema = temaSugerido(); if (R.modo === 'foto' && !fotosRed.length) R.modo = 'folha'; }
+  salvarRed();
+  location.hash = '#/redacao';
+}
+
+// ---- card de redação na tela Hoje: só aparece no dia em que o cronograma marca redação
+function cardRedacao(p) {
+  const rdc = p.redacao;
+  if (!rdc.ligado || !rdc.hoje) return '';
+  const mesNome = parse(hoje()).toLocaleDateString('pt-BR', { month: 'long' });
+  const rt = rdc.ritmo;
+  const qtd = `<b>${rdc.metaMes} ${rdc.metaMes === 1 ? 'redação' : 'redações'} por mês</b>`;
+  const porque = (rdc.sit === 'reta' ? `Reta final: ${qtd}, pelo menos uma por semana. `
+    : rt.pend ? `${qtd} é o ritmo para tirar 900+ nos <b>${rt.pend} ${rt.pend === 1 ? 'tema' : 'temas'}</b> do Desafio dos anos que faltam, até ${mesAno(rt.prazo)}${rdc.sit === 'adiantado' ? ' (+1 porque você está adiantado nas questões)' : ''}. `
+    : `🏅 Desafio dos anos completo! Agora são ${qtd}, para manter a mão. `)
+    + (rdc.hoje.tipo === 'hibrida' ? 'Como você está um pouco atrás nas questões, hoje é dia híbrido: redação + metade da meta.' : 'A redação ocupa o lugar das questões novas do dia.');
+  const prox = rdc.proxima ? ` Próxima: <b>${DIAS_SEMANA[diaSemana(rdc.proxima.d)].toLowerCase()}, ${fmtCurto(rdc.proxima.d)}</b>.` : '';
+  return `<section class="card">
+    <div class="titulo-linha"><h2>✍️ Redação de hoje</h2><span class="small muted">${mesNome}: ${rdc.feitasMes} de ${rdc.metaMes}</span></div>
+    <p class="small" style="margin:0">${rdc.hoje.feita ? '<span style="color:var(--ok)">✓ Feita!</span> ' : ''}${porque}${rdc.hoje.feita ? prox : ''}</p>
+  </section>`;
+}
+
+// ---------------------------------------------------------------- desafio do dia (estudo)
+// Um desafio por dia, escolhido no primeiro acesso do dia (em rodízio) entre os que fazem sentido hoje. O progresso
+// sai das questões respondidas hoje; quando é cumprido fica marcado e conta na sequência de desafios.
+function respostasHoje() {
+  const h = hoje(), out = [];
+  for (const [id, r] of Object.entries(st.q)) {
+    if (!BYID[id]) continue;
+    for (const t of r.h || []) if (t[0] === h) out.push({ q: BYID[id], letra: t[1], ok: t[2] === 1, seg: t[3] || 0, chute: !!t[4] });
+  }
+  return out;
+}
+const fmtMin = seg => (seg >= 60 ? `${Math.floor(seg / 60)}min${String(Math.round(seg % 60)).padStart(2, '0')}` : `${Math.round(seg)} s`);
+const DESAFIOS = [
+  { id: 'alem', titulo: 'Passar da meta', se: p => p.hojeEstuda && !p.retaFinal && p.meta > 0,
+    texto: p => `faça ${p.meta + 5} questões novas hoje, 5 além da meta.`,
+    prog: (R, p) => ({ feito: p.novasHoje >= p.meta + 5, frac: p.novasHoje / (p.meta + 5), txt: `${p.novasHoje}/${p.meta + 5}` }) },
+  { id: 'pontaria', titulo: 'Pontaria', se: () => true,
+    texto: () => 'termine o dia com <b>70% de acerto</b> ou mais, em pelo menos 10 questões.',
+    prog: R => {
+      const n = R.length, a = pct(R.filter(x => x.ok).length, n);
+      return { feito: n >= 10 && a >= 70, frac: Math.min(1, n / 10) * Math.min(1, a / 70), txt: n ? `${a}% em ${n}${n < 10 ? `/10` : ''}` : '0/10' };
+    } },
+  { id: 'area', titulo: 'Volta pelas áreas', se: () => true,
+    arg: (p, n) => { const L = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS; return L[n % L.length]; },
+    texto: (p, a) => `responda <b>5 questões de ${AREAS[a]}</b> hoje (novas ou revisões).`,
+    prog: (R, p, f, a) => { const n = R.filter(x => x.q.area === a).length; return { feito: n >= 5, frac: n / 5, txt: `${n}/5` }; } },
+  { id: 'fraco', titulo: 'Ataque ao ponto fraco', se: () => temasFoco().length > 0,
+    arg: () => temasFoco()[0].c,
+    texto: (p, c) => `responda <b>5 questões de ${esc(nomeAlvo(c))}</b>, um dos temas em que você mais erra.`,
+    prog: (R, p, f, c) => { const n = R.filter(x => noAlvo(temaDe(x.q.id), c)).length; return { feito: n >= 5, frac: n / 5, txt: `${n}/5` }; },
+    botao: c => `<button class="btn" data-treinar="${esc(c)}">Treinar ${esc(nomeAlvo(c))}</button>` },
+  { id: 'revisoes', titulo: 'Caderno em dia', se: (p, f) => f.revs + f.revFaltam >= 3,
+    texto: () => 'zere as <b>revisões do dia</b> no caderno de erros.',
+    prog: (R, p, f) => ({ feito: f.revFaltam === 0, frac: f.revs / Math.max(1, f.revs + f.revFaltam), txt: `${f.revs}/${f.revs + f.revFaltam}` }),
+    botao: () => '<button class="btn" data-desafio="rev">Fazer as revisões</button>' },
+  { id: 'ritmo', titulo: 'Ritmo de prova', se: () => true,
+    texto: () => 'responda 10 questões hoje com <b>média de até 3 min</b> por questão (o tempo da prova).',
+    prog: R => {
+      const n = R.length, media = n ? R.reduce((s, x) => s + x.seg, 0) / n : 0;
+      return { feito: n >= 10 && media <= 180, frac: Math.min(1, n / 10) * (media > 180 ? 180 / media : 1), txt: n ? `${Math.min(n, 10)}/10 · média ${fmtMin(media)}` : '0/10' };
+    } },
+  { id: 'certeza', titulo: 'Sem chutar', se: () => true,
+    texto: () => 'responda <b>10 questões sem chute</b> e sem “não sei” — só o que você sabe resolver.',
+    prog: R => { const n = R.filter(x => !x.chute && x.letra !== '?').length; return { feito: n >= 10, frac: n / 10, txt: `${n}/10` }; } },
+  { id: 'simulado', titulo: 'Mini simulado', se: () => !st.simulado || !!st.simulado.fim,
+    texto: () => 'faça um <b>simulado</b> hoje, de qualquer tamanho, com o relógio ligado.',
+    prog: () => { const ok = (st.simulados || []).some(x => x.data === hoje()); return { feito: ok, frac: ok ? 1 : 0, txt: ok ? '1/1' : '0/1' }; },
+    botao: () => '<a class="btn" href="#/simulado">Ir para o simulado</a>' },
+];
+function desafioHoje(p, f) {
+  const h = hoje();
+  let d = st.desafio;
+  if (!d || d.d !== h || !DESAFIOS.some(x => x.id === d.id)) {
+    const n = Math.max(0, diffDias('2026-01-05', h));
+    const ok = DESAFIOS.filter(x => x.se(p, f));
+    const x = ok[n % ok.length];
+    d = st.desafio = { d: h, id: x.id, arg: x.arg ? x.arg(p, n) : null };
+    salvar();
+  }
+  return { def: DESAFIOS.find(x => x.id === d.id), arg: d.arg };
+}
+function seqDesafio() {
+  const F = st.desafiosFeitos || {};
+  let d = hoje(), n = 0;
+  if (!F[d]) d = somaDias(d, -1);
+  while (F[d]) { n++; d = somaDias(d, -1); }
+  return n;
+}
+function cardDesafio(p, f) {
+  const h = hoje();
+  const { def, arg } = desafioHoje(p, f);
+  const pr = def.prog(respostasHoje(), p, f, arg);
+  if (pr.feito && !st.desafiosFeitos?.[h]) { (st.desafiosFeitos ||= {})[h] = 1; salvar(); }
+  const feito = !!st.desafiosFeitos?.[h];
+  const seq = seqDesafio();
+  return `<section class="card desafio-dia ${feito ? 'feito' : ''}">
+    <div class="titulo-linha"><h2>🎯 Desafio do dia</h2>${seq > 1 ? `<span class="small muted">🔥 ${seq} dias seguidos</span>` : ''}</div>
+    <p style="margin:0 0 10px"><b>${esc(def.titulo)}:</b> ${def.texto(p, arg)}</p>
+    <div class="desafio-prog"><div class="barra"><i style="width:${Math.round(100 * Math.max(0, Math.min(1, feito ? 1 : pr.frac)))}%"></i></div>
+      <span class="small">${feito ? '<b style="color:var(--ok)">✓ Cumprido!</b>' : esc(pr.txt)}</span></div>
+    ${!feito && def.botao ? `<div class="linha-btns" style="margin-top:10px">${def.botao(arg)}</div>` : ''}
+  </section>`;
+}
+function ligarDesafio(p) {
+  $app.querySelector('[data-desafio=rev]')?.addEventListener('click', () => iniciar(p.vencidas, 'rev'));
+}
+
 // ---------------------------------------------------------------- rotas
 function rota() {
   limpar.forEach(f => f());
@@ -2061,6 +3132,7 @@ function rota() {
   else if (pagina === 'progresso') telaProgresso();
   else if (pagina === 'ajustes') telaAjustes();
   else if (pagina === 'logica') telaLogica();
+  else if (pagina === 'redacao') telaRedacao(arg);
   else if (pagina === 'ver' && BYID[arg]) verQuestao(arg);
   else telaInicio();
 }

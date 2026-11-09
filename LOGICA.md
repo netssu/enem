@@ -137,3 +137,39 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 
 - Na tela inicial: quanto das questões já foi feito e uma frase só sobre quando você termina as questões novas, em mês e ano. Se o seu ritmo dos últimos 14 dias termina antes do planejado, a frase usa o seu ritmo; senão, mostra a data em que você termina seguindo as metas do dia.
 - De propósito, sem contas de revisões nem datas distantes: a meta do dia já se ajusta sozinha.
+
+## Redação
+
+Aba **Redação**: folha de 30 linhas (padrão), foto da folha ou caixa de texto livre (escondida, para quem só passa a limpo). A IA corrige com a matriz do INEP e as lições das redações nota 1000 (`app/data/redacao.js`) e devolve trechos grifados do verde ao vermelho, a nota num cenário pessimista e num otimista, o que estudar e dicas de português.
+
+- **Tamanho da folha:** as 6 redações nota 1000 publicadas em texto no Toda Matéria têm em média 466 palavras e 3.090 caracteres. Renderizadas com recuo de parágrafo, elas ocupam 30 linhas em média quando cada linha comporta ~112 caracteres; a fonte da folha é calculada para isso. No celular a fonte não encolhe abaixo do legível e a contagem vira "linhas equivalentes na folha de papel".
+- **Tempo real (opcional):** enquanto você escreve, a IA lê o texto (depois de 5 s parado, no máximo a cada 40 s, só quando uma frase termina ou o texto muda bastante) e grifa trechos numa camada atrás da folha. Clicar num trecho abre uma janelinha em cima dele com o comentário e permite aplicar a sugestão. Cada leitura é um pedido à IA.
+
+### Desafio dos anos
+
+Objetivo: tirar **900+** no tema de cada ENEM desde 2010 (16 temas). Conta a média dos dois cenários da correção (como a média de dois corretores, em degraus de 20). Cada ano mostra redações **reais** com nota 980–1000 daquele tema (`app/data/referencias.js`), pesquisadas em páginas públicas — sobretudo as Cartilhas/Guias do Participante do INEP, além de Estratégia Vestibulares, Blog do Vestibular, Blog do Enem, Revista Quero, Redação Online, Descomplica e Imaginie. O app guarda só autor, nota, o link para ler o texto na fonte e uma análise curta (introdução, argumentos, proposta, por que funciona); o texto das redações não é copiado. A IA recebe essas análises como régua ao corrigir uma redação do mesmo tema.
+
+- 2011–2025: de 5 a 9 redações por ano (91 no total).
+- 2010: nenhuma — o INEP só passou a divulgar redações nota 1000 em 2012 (com textos de 2011), e o que circula de 2010 são modelos sem autor ou de cursinho.
+- 2013: uma das cinco tem nota 980 e outra aparece numa lista de textos nota 1000 sem nota individual (marcada assim no app).
+
+### Redação no cronograma
+
+O volume vem do Desafio dos anos: **temas que faltam × 1,5 tentativas por tema ÷ meses até o prazo** (1 ano a partir de hoje ou 1 semana antes da prova, o que vier primeiro), arredondado — hoje dá **2 por mês**. Se você ficar para trás ou não passar de 900, o mês seguinte recalcula com os temas que faltam. A situação nas questões ajusta:
+
+| Situação | Ajuste |
+|---|---|
+| Adiantado (termina 2+ semanas antes) | +1 redação por mês |
+| Em dia / sem histórico | — |
+| Atrasado | o dia de redação vira **híbrido**: redação + metade da meta de questões |
+| Reta final (só revisão) | pelo menos 4 por mês (1 por semana) |
+
+As redações do mês se espalham igualmente pelo mês (no mês atual, pelos dias que restam), sempre em dia de estudo e com pelo menos 3 dias entre elas. O dia de redação pesa 0 (ou ½, no híbrido) na conta das metas, então as questões daquele dia vão para os outros. O tema sugerido é o próximo ano do desafio: primeiro os nunca tentados (do mais recente ao mais antigo), depois os que ainda não passaram de 900. Redação que passou da data vai para o próximo dia de estudo; "Adiar" pula o dia; "Já fiz no papel" conta como feita. Dá para desligar em Ajustes. Com os 16 anos conquistados, fica 1 por mês para manter a mão.
+
+Na tela Hoje, o card "✍️ Redação de hoje" só aparece no dia em que o cronograma marca redação.
+
+## Desafio do dia
+
+Um desafio de estudo por dia, separado da redação, escolhido no primeiro acesso do dia (em rodízio) entre os que fazem sentido naquele dia: passar 5 da meta, 70% de acerto em 10+ questões, 5 questões de uma área, 5 do tema mais fraco, zerar as revisões do dia, 10 questões com média de até 3 min, 10 questões sem chute nem "não sei", ou um mini simulado. O progresso sai das questões respondidas no dia; cumprido, fica marcado e conta na sequência 🔥 de desafios.
+
+A janelinha da correção em tempo real abre logo acima do trecho clicado (ou abaixo, se não couber na tela); Esc ou clicar fora fecha.

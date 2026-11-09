@@ -162,7 +162,8 @@ function plano() {
   const previsao = ritmo > 0 && ativos >= 3 ? somaDias(h, Math.ceil(restantes / ritmo)) : null;
   // dias de redação tiram (dia cheio) ou dividem (dia híbrido) a meta de questões daquele dia
   const rdc = planoRedacao(h, fimNovas, P, previsao, ativos);
-  const pesoDe = d => P[diaSemana(d)] * rdc.fator(d);
+  const sims = planoSimulados(h, fimNovas, P, rdc);
+  const pesoDe = d => P[diaSemana(d)] * rdc.fator(d) * sims.fator(d);
   const somaPesos = de => { let s = 0; for (let d = de; d <= fimNovas; d = somaDias(d, 1)) s += pesoDe(d); return s; };
   let diasEstudo = 0;
   for (let d = h; d <= fimNovas; d = somaDias(d, 1)) if (P[diaSemana(d)] > 0) diasEstudo++;
@@ -188,6 +189,7 @@ function plano() {
     diasProva: diffDias(h, st.cfg.prova),
     vencidas: vencidas().length,
     redacao: rdc,
+    simulados: sims,
   };
 }
 
@@ -327,6 +329,14 @@ function montarSessao(tam, tipo = 'misto', tema = null, cota = null) {
       revs = revs.concat(emRevisao().filter(q => noAlvo(temaDe(q.id), tema) && !ja.has(q.id)).slice(0, tam - novas.length - revs.length));
     }
     novas.forEach(q => { foco[q.id] = tema; });
+  } else if (tipo === 'area') {
+    // uma área só: metade revisões vencidas da área, o resto questões novas dela
+    revs = venc.filter(q => q.area === tema).slice(0, Math.floor(tam / 2));
+    novas = filaNovas().filter(q => q.area === tema).slice(0, tam - revs.length);
+    if (novas.length + revs.length < tam) {
+      const ja = new Set(revs.map(q => q.id));
+      revs = revs.concat(venc.filter(q => q.area === tema && !ja.has(q.id)).slice(0, tam - novas.length - revs.length));
+    }
   } else if (tipo === 'rev') {
     const base = venc.length ? venc : emRevisao().sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox));
     revs = base.slice(0, tam);
@@ -634,126 +644,322 @@ let limpar = [];
 function aoSair(fn) { limpar.push(fn); }
 
 // ---------------------------------------------------------------- telas
+// ---------------------------------------------------------------- cronograma (tela inicial)
+// Fases até a prova: base (questões novas + revisões) → ritmo de prova (últimos 90 dias de questões novas) →
+// reta final (só revisão). Em toda semana há um simulado curto, que alterna entre "misto" e um desafio numa
+// matéria em que você tem dificuldade; o tamanho cresce com a fase. O simulado ocupa o lugar das questões novas
+// do dia (as dele contam como novas).
+const SIM_TAM = { base: 15, ritmo: 20, reta: 30 };      // simulado misto
+const SIM_FOCO = { base: 10, ritmo: 15, reta: 20 };     // desafio numa matéria difícil
+const NOME_FASE = { base: 'Base', ritmo: 'Ritmo de prova', reta: 'Reta final' };
+const fimBase = fimNovas => somaDias(fimNovas, -90);
+function faseDe(d, fimNovas) { return d > fimNovas ? 'reta' : d > fimBase(fimNovas) ? 'ritmo' : 'base'; }
+const fmtDur = min => (min >= 60 ? `${Math.floor(min / 60)}h${min % 60 ? String(Math.round(min % 60)).padStart(2, '0') : ''}` : `${Math.max(1, Math.round(min))} min`);
+const nomeMateria = x => (x.materia ? x.nome : materiaDe(x.c));
+function cfgSimulado(fase, k, fracos) {
+  const areas = st.cfg.areas.length ? st.cfg.areas : [...ORDEM_AREAS];
+  const origem = fase === 'reta' ? 'todas' : 'novas';
+  // semanas pares: desafio numa das 3 matérias/temas mais fracos (em rodízio); ímpares: misto
+  const foco = fracos.length && k % 2 === 0 ? fracos[(k / 2) % fracos.length] : null;
+  if (foco) {
+    const mat = nomeMateria(foco);
+    return { n: SIM_FOCO[fase], tempo: 'enem', areas: [foco.area], materia: `${foco.area}|${mat}`, origem, rotulo: `Desafio de ${mat}`, foco: true, fase };
+  }
+  return { n: SIM_TAM[fase], tempo: 'enem', areas, materia: '', origem, rotulo: fase === 'reta' ? 'Simulado geral' : 'Simulado misto', foco: false, fase };
+}
+function planoSimulados(h, fimNovas, P, rdc) {
+  const feitos = (st.simulados || []).map(x => x.data);
+  const vazio = { ligado: false, dias: new Map(), fator: () => 1, hoje: null, proximo: null, feitos: feitos.length };
+  if (st.cfg.simCrono === false) return vazio;
+  const prova = st.cfg.prova;
+  const adiados = new Set(st.simAdiados || []);
+  const an = analisePontos();
+  const fracos = an.pronto ? an.fracos.slice(0, 3) : [];
+  const dias = new Map();
+  const dom0 = somaDias(h, -diaSemana(h));
+  // o simulado de hoje (já feito) conta como o da semana se foi o primeiro dela
+  const daSemana = feitos.filter(d => d >= dom0 && d <= h).sort();
+  const hojeFeito = daSemana[0] === h;
+  for (let dom = dom0, k = 0; dom < prova && k < 80; dom = somaDias(dom, 7), k++) {
+    if (k === 0 && daSemana.length) continue;   // já fez o desta semana
+    const cands = Array.from({ length: 7 }, (_, i) => somaDias(dom, i))
+      .filter(d => d >= h && d < prova && P[diaSemana(d)] > 0 && !rdc.dias.has(d) && !(d === h && rdc.hoje) && !adiados.has(d));
+    if (!cands.length) continue;
+    // o dia mais forte da semana (empate: o mais perto do fim de semana)
+    const dia = cands.reduce((m, d) => (P[diaSemana(d)] >= P[diaSemana(m)] ? d : m));
+    dias.set(dia, cfgSimulado(faseDe(dia, fimNovas), Math.floor(diffDias('2026-01-04', dom) / 7), fracos));
+  }
+  const ocupa = c => c.origem === 'novas';
+  const hojeCfg = dias.get(h) || null;
+  const proximo = [...dias.keys()].filter(d => d > h).sort()[0] || null;
+  return {
+    ligado: true, dias, feitos: feitos.length,
+    fator: d => (d === h ? (hojeFeito || (hojeCfg && ocupa(hojeCfg)) ? 0 : 1) : dias.has(d) && ocupa(dias.get(d)) ? 0 : 1),
+    hoje: hojeCfg ? { cfg: hojeCfg, feito: false } : hojeFeito ? { cfg: null, feito: true } : null,
+    proximo: proximo ? { d: proximo, cfg: dias.get(proximo) } : null,
+  };
+}
+// começa um simulado já configurado (pelo cronograma); sem questões novas suficientes, usa qualquer uma
+function iniciarSimulado(c) {
+  if (st.simulado && !st.simulado.fim) { location.hash = '#/simulado'; return; }
+  let cands = candidatosSim(c);
+  if (cands.length < c.n && c.origem === 'novas') cands = candidatosSim({ ...c, origem: 'todas' });
+  const qs = embaralhar(cands).slice(0, c.n)
+    .sort((a, b) => ORDEM_AREAS.indexOf(a.area) - ORDEM_AREAS.indexOf(b.area) || a.ano - b.ano || a.num - b.num);
+  if (!qs.length) { alert('Não há questões para esse simulado.'); return; }
+  st.simulado = { ids: qs.map(q => q.id), resp: {}, seg: {}, i: 0, inicio: Date.now(), fim: null, limite: qs.length * 180, rotulo: c.rotulo };
+  salvar();
+  if (location.hash === '#/simulado') rota(); else location.hash = '#/simulado';
+}
+
+// ---- quanto falta para um bom desempenho: acerto de primeira por área (últimos 90 dias, ou tudo se houver pouco)
+const MIN_PRONTIDAO = 15;
+function prontidao() {
+  const corte = somaDias(hoje(), -90);
+  const A = Object.fromEntries(ORDEM_AREAS.map(a => [a, { n: 0, ok: 0, n90: 0, ok90: 0 }]));
+  for (const [id, r] of Object.entries(st.q)) {
+    const q = BYID[id];
+    if (!q || !r.h?.length || !A[q.area]) continue;
+    const t = r.h[0], ok = t[2] === 1 && !t[4] ? 1 : 0, x = A[q.area];
+    x.n++; x.ok += ok;
+    if (t[0] >= corte) { x.n90++; x.ok90 += ok; }
+  }
+  const areas = ORDEM_AREAS.map(a => {
+    const x = A[a], usa90 = x.n90 >= 30;
+    const n = usa90 ? x.n90 : x.n, ok = usa90 ? x.ok90 : x.ok;
+    return { area: a, n, taxa: n ? ok / n : null };
+  });
+  const ult = [...red.hist].slice(0, 3);
+  const redacao = ult.length ? Math.round(ult.reduce((s, x) => s + notaMedia(x.res), 0) / ult.length / 20) * 20 : null;
+  return { areas, redacao, nRed: ult.length };
+}
+function prontidaoHTML() {
+  const pr = prontidao();
+  const alvo = st.cfg.metaAcerto || 70;
+  const linha = (rotulo, valor, meta, txtValor, dica) => {
+    const pos = Math.min(100, Math.max(0, valor ?? 0));
+    const ok = valor !== null && valor >= meta;
+    return `<div class="pr-linha" title="${esc(dica)}"><span class="pr-nome">${rotulo}</span>
+      <div class="pr-barra"><i class="${ok ? 'ok' : ''}" style="width:${pos}%"></i><b style="left:${meta}%"></b></div>
+      <span class="pr-num">${txtValor}</span></div>`;
+  };
+  let noAlvo = 0, comDados = 0;
+  const linhas = pr.areas.map(x => {
+    if (x.n < MIN_PRONTIDAO) return linha(chipArea(x.area), null, alvo, `<span class="muted">${x.n}/${MIN_PRONTIDAO} questões</span>`, `Faça pelo menos ${MIN_PRONTIDAO} questões de ${AREAS[x.area]} para medir`);
+    const v = Math.round(x.taxa * 100);
+    comDados++; if (v >= alvo) noAlvo++;
+    return linha(chipArea(x.area), v, alvo, v >= alvo ? `<b class="pr-ok">${v}% ✓</b>` : `<b>${v}%</b> <span class="muted">· faltam ${alvo - v}</span>`, `${AREAS[x.area]}: ${v}% de acerto de primeira em ${x.n} questões`);
+  });
+  // redação: escala 0–1000 → 0–100% da barra; meta 900
+  if (pr.redacao === null) linhas.push(linha('<span class="chip">✍️ Redação</span>', null, 90, '<span class="muted">sem correção</span>', 'Corrija uma redação para medir'));
+  else {
+    comDados++; if (pr.redacao >= 900) noAlvo++;
+    linhas.push(linha('<span class="chip">✍️ Redação</span>', pr.redacao / 10, 90, pr.redacao >= 900 ? `<b class="pr-ok">${pr.redacao} ✓</b>` : `<b>${pr.redacao}</b> <span class="muted">· faltam ${900 - pr.redacao}</span>`, `média das últimas ${pr.nRed} correções`));
+  }
+  return `<section class="card">
+    <div class="titulo-linha"><h2>Quanto falta para um bom desempenho</h2><span class="small muted">${comDados ? `${noAlvo} de ${ORDEM_AREAS.length + 1} no alvo` : ''}</span></div>
+    <p class="small muted" style="margin:0 0 12px">Acerto de primeira por área (alvo: <b>${alvo}%</b>, muda em Ajustes) e a média das suas últimas redações (alvo: <b>900</b>).</p>
+    <div class="pr-lista">${linhas.join('')}</div>
+  </section>`;
+}
+
+// ---- plano até a prova: fases na linha do tempo + o que falta
+function planoAteProvaHTML(p) {
+  const h = hoje(), prova = st.cfg.prova;
+  if (p.diasProva <= 0) return '';
+  const total = Math.max(1, diffDias(h, prova));
+  const fb = fimBase(p.fimNovas);
+  const seg = [
+    ['base', h, fb < h ? h : fb],
+    ['ritmo', fb < h ? h : fb, p.fimNovas < h ? h : p.fimNovas],
+    ['reta', p.fimNovas < h ? h : p.fimNovas, prova],
+  ].filter(([, a, b]) => b > a);
+  const atual = faseDe(h, p.fimNovas);
+  const sims = p.simulados;
+  const pt = previsaoTermino(p);
+  const desc = {
+    base: `Questões novas + revisões do caderno de erros. Simulado curto toda semana (${SIM_TAM.base} questões ou desafio de ${SIM_FOCO.base} numa matéria difícil).`,
+    ritmo: `Termina as questões novas. Simulados de ${SIM_TAM.ritmo} questões (ou ${SIM_FOCO.ritmo} na matéria mais difícil) no tempo de prova.`,
+    reta: `Só revisão: caderno de erros, simulados de ${SIM_TAM.reta} questões e 1 redação por semana.`,
+  };
+  const pctQ = pct(p.feitas, p.total);
+  return `<section class="card">
+    <div class="titulo-linha"><h2>Plano até o ENEM</h2><span class="small muted">${fmt(prova)}</span></div>
+    <div class="fases">${seg.map(([f, a, b]) => `<div class="fase ${f} ${f === atual ? 'atual' : ''}" style="flex:${Math.max(1, diffDias(a, b))}">
+      <span class="fase-nome">${NOME_FASE[f]}</span><span class="fase-data">${dataCurta(a)} – ${dataCurta(b)}</span></div>`).join('')}</div>
+    <p class="small" style="margin:10px 0 14px"><b>Agora: ${NOME_FASE[atual]}.</b> ${desc[atual]}</p>
+    <div class="plano-metas">
+      <div><span class="small muted">Questões novas</span><div class="barra"><i style="width:${Math.max(1, pctQ)}%"></i></div>
+        <span class="small">${p.feitas} de ${p.total} · ${p.retaFinal ? 'fase de revisão' : pt.real && pt.fimNovas && pt.fimNovas <= p.fimNovas ? `no seu ritmo, termina em <b>${mesAno(pt.fimNovas)}</b> 💪` : `termina em <b>${mesAno(p.fimNovas)}</b> seguindo as metas`}</span></div>
+      ${caminhoRedacao(p)}
+      ${sims.ligado ? `<div><span class="small muted">Simulados</span><div class="barra"><i style="width:${Math.max(1, pct(sims.feitos, sims.feitos + sims.dias.size))}%"></i></div>
+        <span class="small">${sims.feitos} feitos · ${sims.dias.size} até a prova${sims.proximo ? ` · próximo: <b>${DIAS_SEMANA[diaSemana(sims.proximo.d)].toLowerCase()}, ${fmtCurto(sims.proximo.d)}</b> (${esc(sims.proximo.cfg.rotulo)})` : ''}</span></div>` : ''}
+    </div>
+  </section>`;
+}
+
+// ---- agenda de hoje: tudo o que o cronograma pede, com tempo e um botão para cada coisa
+function agendaHoje(p, f) {
+  const h = hoje();
+  const itens = [];
+  const emAndamento = sessaoDe('normal'), revAberta = sessaoDe('rev');
+  const rdc = p.redacao, sim = p.simulados;
+  if (sim.hoje) {
+    const c = sim.hoje.cfg;
+    itens.push({
+      id: 'sim', icone: '📝', titulo: c ? `Simulado: ${c.rotulo}` : 'Simulado da semana',
+      detalhe: c ? `${c.n} questões no tempo de prova${c.origem === 'novas' ? ' · conta como as questões novas de hoje' : ''}` : 'feito hoje',
+      min: c ? c.n * 3 : 0, feito: sim.hoje.feito,
+      botao: c && (st.simulado && !st.simulado.fim ? { rotulo: 'Continuar simulado', ir: () => { location.hash = '#/simulado'; } } : { rotulo: 'Começar', ir: () => iniciarSimulado(c) }),
+      extra: c ? '<button class="btn fantasma mini" type="button" data-ag="sim-adiar">Adiar</button>' : '',
+    });
+  }
+  if (rdc.hoje) {
+    const tema = temaSugerido(), ano = anoDoTema(tema);
+    itens.push({
+      id: 'red', icone: '✍️', titulo: rdc.hoje.tipo === 'hibrida' ? 'Redação (dia híbrido)' : 'Redação',
+      detalhe: rdc.hoje.feita ? 'feita' : `${ano ? `🏅 ENEM ${ano}: ` : ''}${esc(tema)}`,
+      min: 75, feito: rdc.hoje.feita,
+      botao: { rotulo: 'Escrever', ir: abrirRedacaoDoDia },
+      extra: rdc.hoje.feita ? '' : '<button class="btn fantasma mini" type="button" data-ag="red-feita">Já fiz no papel</button><button class="btn fantasma mini" type="button" data-ag="red-adiar">Adiar</button>',
+    });
+  }
+  if (f.revs + f.revFaltam > 0) itens.push({
+    id: 'rev', icone: '↺', titulo: 'Revisões do caderno de erros', detalhe: `${f.revs} de ${f.revs + f.revFaltam}`,
+    min: f.revFaltam * 3, feito: f.revFaltam === 0, frac: f.revs / (f.revs + f.revFaltam),
+    botao: revAberta ? { rotulo: `Continuar (${revAberta.i + 1}/${revAberta.itens.length})`, ir: () => retomar('rev') } : { rotulo: 'Fazer', ir: () => iniciar(p.vencidas, 'rev') },
+  });
+  if (!p.retaFinal && p.meta > 0) {
+    const falta = Math.max(0, p.meta - p.novasHoje);
+    itens.push({
+      id: 'novas', icone: '➕', titulo: 'Questões novas', detalhe: `${p.novasHoje} de ${p.meta}${p.novasHoje > p.meta ? ` (+${p.novasHoje - p.meta})` : ''}`,
+      min: falta * 3, feito: falta === 0, frac: p.novasHoje / p.meta,
+      botao: emAndamento ? { rotulo: `Continuar (${emAndamento.i + 1}/${emAndamento.itens.length})`, ir: () => retomar('normal') }
+        : { rotulo: falta && falta <= st.cfg.bloco ? `Fazer as ${falta}` : `Bloco de ${st.cfg.bloco}`, ir: () => iniciar(falta && falta <= st.cfg.bloco ? falta : st.cfg.bloco, 'misto', null, { r: 0 }) },
+    });
+  }
+  // desafio do dia: opcional
+  const { def, arg } = desafioHoje(p, f);
+  const R = respostasHoje();
+  const pr = def.prog(R, p, f, arg);
+  if (pr.feito && !st.desafiosFeitos?.[h]) { (st.desafiosFeitos ||= {})[h] = 1; salvar(); }
+  const dFeito = !!st.desafiosFeitos?.[h];
+  const ac = dFeito ? null : def.acao(p, f, arg, R);
+  itens.push({
+    id: 'desafio', icone: '🎯', titulo: `Desafio: ${def.titulo}`, detalhe: `${def.texto(p, arg)} <span class="muted">· ${dFeito ? 'cumprido' : esc(pr.txt)}</span>`,
+    min: 0, feito: dFeito, frac: pr.frac, opcional: true,
+    botao: ac && (ac.href ? { rotulo: ac.rotulo, href: ac.href } : { rotulo: ac.rotulo, ir: ac.ir }),
+  });
+  return itens;
+}
+function agendaHTML(p, f, itens) {
+  const obrig = itens.filter(x => !x.opcional);
+  const feitos = obrig.filter(x => x.feito).length;
+  const falta = obrig.filter(x => !x.feito).reduce((s, x) => s + x.min, 0);
+  const completo = obrig.length && feitos === obrig.length;
+  const seq = seqDesafio();
+  let cab;
+  if (!p.hojeEstuda && !obrig.length) cab = 'Hoje é <b>folga</b> no seu cronograma. Se quiser, o desafio do dia e a aba Questões estão aí — sem culpa.';
+  else if (completo) cab = `✓ <b>Dia completo!</b> ${p.novasHoje > p.meta && p.meta ? `E com +${p.novasHoje - p.meta} novas além da meta. ` : ''}Daqui para frente é lucro.`;
+  else cab = `Para fechar o dia: <b>~${fmtDur(falta)}</b> <span class="muted">(${feitos} de ${obrig.length} ${obrig.length === 1 ? 'tarefa' : 'tarefas'})</span>`;
+  return `<section class="card destaque agenda">
+    <div class="titulo-linha"><h2>Hoje</h2>${seq > 1 ? `<span class="small muted">🔥 ${seq} dias de desafio seguidos</span>` : ''}</div>
+    ${obrig.length ? `<div class="barra" style="margin:2px 0 10px"><i style="width:${Math.max(2, pct(feitos, obrig.length))}%"></i></div>` : ''}
+    <p class="small" style="margin:0 0 6px">${cab}</p>
+    <ul class="ag-lista">${itens.map(x => `<li class="ag-item ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">
+      <span class="ag-icone">${x.feito ? '✓' : x.icone}</span>
+      <div class="ag-texto"><b>${esc(x.titulo)}</b>${x.opcional ? ' <span class="chip">opcional</span>' : ''}<span class="small">${x.detalhe}</span>
+        ${x.frac !== undefined && !x.feito ? `<span class="barra fina"><i style="width:${Math.round(100 * Math.min(1, x.frac))}%"></i></span>` : ''}</div>
+      <div class="ag-acoes">${x.min && !x.feito ? `<span class="small muted">~${fmtDur(x.min)}</span>` : ''}
+        ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ${x.opcional ? '' : 'primario'}" href="${x.botao.href}">${esc(x.botao.rotulo)}</a>` : `<button class="btn ${x.opcional ? '' : 'primario'}" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
+        ${x.extra || ''}</div>
+    </li>`).join('')}</ul>
+    <p class="small muted" style="margin:10px 0 0">Quer só responder questões, sem plano? Use a aba <a href="#/questoes">Questões</a> — tudo conta no cronograma do mesmo jeito.</p>
+  </section>`;
+}
+
 function telaInicio() {
   const p = plano();
-  const s = st.sessao;
-  const emAndamento = sessaoDe('normal');
-  const revAberta = sessaoDe('rev');
-  const pctTotal = pct(p.feitas, p.total);
   const h = hoje();
-  // guarda a meta do dia no histórico (para a semana mostrar meta × feito nos dias que passaram)
   if (p.meta && st.log[h]?.m === undefined) { (st.log[h] ||= { n: 0, r: 0, ok: 0 }).m = p.meta; salvar(); }
-  const lgHoje = st.log[h] || { n: 0, r: 0, ok: 0 };
-  const feitasHoje = lgHoje.n + lgHoje.r;
-  const faltaHoje = Math.max(0, p.meta - p.novasHoje);
+  // dia de redação/simulado: a meta guardada acompanha a troca (para a semana não marcar "faltou")
+  if ((p.redacao.hoje || p.simulados.hoje) && st.log[h]?.m !== p.meta) { (st.log[h] ||= { n: 0, r: 0, ok: 0 }).m = p.meta; salvar(); }
   const f = diaHoje(p);
-  const rdc = p.redacao, redPend = !!(rdc.hoje && !rdc.hoje.feita);
-  // dia de redação: a meta guardada do dia acompanha a troca (para a semana não marcar "faltou")
-  if (rdc.hoje && st.log[h]?.m !== p.meta) { (st.log[h] ||= { n: 0, r: 0, ok: 0 }).m = p.meta; salvar(); }
-  const recorde = Math.max(0, ...Object.entries(st.log).filter(([d]) => d !== h).map(([, l]) => l.n + l.r));
-  // quanto a meta dos próximos dias cai com mais um bloco hoje
-  const prox = p.proxEstudo;
-  const metaProx = prox ? p.metaFutura(prox) : 0;
-  const metaProxMais = prox ? p.metaFutura(prox, st.cfg.bloco) : 0;
-  const nomeProx = prox ? (prox === somaDias(h, 1) ? 'amanhã' : DIAS_SEMANA[diaSemana(prox)].toLowerCase()) : '';
-  const passar = [];
-  if (prox && metaProxMais < metaProx) passar.push(`Mais um bloco de ${st.cfg.bloco} hoje → a meta de ${nomeProx} cai de <b>${metaProx}</b> para <b>${metaProxMais}</b>.`);
-  else if (p.ritmoMeta > 0 && !p.retaFinal) {
-    const adianta = st.cfg.bloco / p.ritmoMeta;
-    passar.push(`Mais um bloco de ${st.cfg.bloco} hoje adianta <b>${adianta >= 0.95 ? `${Math.round(adianta)} ${Math.round(adianta) === 1 ? 'dia' : 'dias'}` : `${Math.round(adianta * 10) / 10} dia`}</b> de estudo do seu cronograma.`);
-  }
-  if (recorde > 0 && feitasHoje > 0) passar.push(feitasHoje > recorde ? `🏆 <b>Novo recorde!</b> ${feitasHoje} questões num dia (o anterior era ${recorde}).`
-    : `Seu recorde é <b>${recorde}</b> questões num dia — faltam ${recorde - feitasHoje + 1} para bater.`);
-  let mensagem;
-  if (p.retaFinal) mensagem = `Reta final! Faltam ${p.diasProva} dias para a prova: o foco agora é o <b>caderno de erros</b>.`;
-  else if (!p.hojeEstuda) mensagem = feitasHoje
-    ? `Hoje é folga no seu cronograma e você já fez <b>${feitasHoje} ${feitasHoje === 1 ? 'questão' : 'questões'}</b> — tudo isso é lucro e adianta o cronograma.`
-    : 'Hoje é dia de folga no seu cronograma. Se sobrar um tempinho, um bloco rápido ajuda — mas sem culpa.';
-  else if (redPend) mensagem = rdc.hoje.tipo === 'cheia'
-    ? `✍️ Hoje é <b>dia de redação</b>: no lugar das questões novas, escreva uma redação completa (~1h)${f.revFaltam ? `. Se der, faça também ${textoFalta({ revFaltam: f.revFaltam })}` : ''}.`
-    : `✍️ Hoje é <b>dia híbrido</b>: uma redação${f.faltam ? ` + <b>${textoFalta(f)}</b>` : ''}. Como você está um pouco atrás nas questões, a redação divide o dia com metade da meta.`;
-  else if (f.faltam === 0) mensagem = `✓ <b>Dia completo!</b> ${p.novasHoje > p.meta ? `E com <b>+${p.novasHoje - p.meta} novas</b> além da meta.` : 'Tudo o que era para hoje está feito.'} Daqui para frente é lucro.`;
-  else mensagem = `${f.total ? 'Para fechar o dia, faltam' : 'Hoje são'} <b>${textoFalta(f)}</b> <span class="muted">(~${f.faltam * 3} min)</span>.`;
-  // uma linha por tipo de questão do dia: barra + feitas/alvo (a parte além da meta aparece em outra cor)
-  const linhaHoje = (nome, feitas, alvo, dica) => {
-    const base = Math.max(alvo, feitas, 1);
-    return `<div class="hm-linha" title="${dica}"><span class="hm-nome">${nome}</span>
-      <div class="barra meta-barra"><i style="width:${(100 * Math.min(feitas, alvo)) / base}%"></i><i class="alem" style="width:${(100 * Math.max(0, feitas - alvo)) / base}%"></i></div>
-      <span class="hm-num"><b>${feitas}</b>${alvo ? `/${alvo}` : ''}${feitas >= alvo && alvo ? ' ✓' : ''}</span></div>`;
-  };
-  const linhas = [];
-  if (!p.retaFinal && (p.meta || p.novasHoje)) linhas.push(linhaHoje('Novas', p.novasHoje, p.meta, p.meta ? `meta de hoje: ${p.meta} questões novas` : 'questões novas feitas hoje'));
-  if (f.revs || f.revFaltam) linhas.push(linhaHoje('Revisões', f.revs, f.revs + f.revFaltam, `revisões: ${f.revs} feitas hoje, ${f.revFaltam} vencidas para fazer`));
-  const barraHoje = linhas.length ? `<div class="hoje-metas">${linhas.join('')}</div>` : '';
-  const pb = proximoBloco(p);
-  const pt = previsaoTermino(p);
-
+  const itens = agendaHoje(p, f);
+  const P = p.pesos;
+  let diasEstudo = 0;
+  for (let d = h; d < st.cfg.prova; d = somaDias(d, 1)) if (P[diaSemana(d)] > 0) diasEstudo++;
   $app.innerHTML = `
-    <h1>${saudacao()}</h1>
-    <p class="muted">${p.diasProva > 0 ? `Faltam <b>${p.diasProva} dias</b> para o ENEM (${fmt(st.cfg.prova)}).` : 'Configure a data da prova em Ajustes.'}</p>
-
-    <section class="card destaque">
-      <div class="titulo-linha"><h2>Hoje</h2>${feitasHoje ? `<span class="small muted">${feitasHoje} ${feitasHoje === 1 ? 'questão respondida' : 'questões respondidas'}</span>` : ''}</div>
-      ${barraHoje}
-      <p style="margin-bottom:0">${mensagem}${rdc.hoje?.feita ? ' <span style="color:var(--ok)">✍️ Redação de hoje feita.</span>' : ''}</p>
-      ${redPend ? `<p class="small muted" style="margin:6px 0 0">Tema sugerido${anoDoTema(temaSugerido()) ? ` (🏅 Desafio dos anos: ENEM ${anoDoTema(temaSugerido())})` : ''}: <b>${esc(temaSugerido())}</b>. Dá para trocar na tela da redação.</p>` : ''}
-      ${passar.length && (faltaHoje === 0 || !p.hojeEstuda) && !p.retaFinal ? `<p class="small" style="margin:10px 0 0">${passar.join('<br>')}</p>` : ''}
-      <div class="linha-btns">
-        ${redPend ? '<button class="btn primario grande" data-acao="redacao">✍️ Escrever a redação de hoje</button>'
-          : emAndamento
-          ? `<button class="btn primario grande" data-acao="continuar">Continuar bloco (${emAndamento.i + 1}/${emAndamento.itens.length})</button>`
-          : `<button class="btn primario grande" data-acao="bloco">${pb.rotulo}</button>`}
-      </div>
-      <div class="linha-btns">
-        ${redPend ? (emAndamento ? `<button class="btn" data-acao="continuar">Continuar bloco (${emAndamento.i + 1}/${emAndamento.itens.length})</button>` : `<button class="btn" data-acao="bloco">${pb.rotulo}</button>`) : ''}
-        <button class="btn" data-acao="rapido">⚡ Só 5 rapidinhas</button>
-        ${revAberta ? `<button class="btn" data-acao="cont-rev">↺ Continuar correção (${revAberta.i + 1}/${revAberta.itens.length})</button>`
-          : p.vencidas ? `<button class="btn" data-acao="revisar">↺ Só revisões (${p.vencidas})</button>` : ''}
-        ${redPend ? '<button class="btn fantasma" data-acao="red-feita" title="Escreveu no papel e não vai mandar para correção">Já fiz no papel</button><button class="btn fantasma" data-acao="red-adiar" title="Passa a redação para o próximo dia de estudo">Adiar</button>' : ''}
-      </div>
-      <p class="small muted" style="margin-bottom:0">Cada bloco mistura novas com as revisões do dia. Pode parar no meio: o app guarda onde você parou.</p>
-    </section>
-
+    <div class="crono-topo">
+      <div><h1>${saudacao()}</h1>
+        <p class="muted" style="margin:0">${p.diasProva > 0 ? 'Seu cronograma até o ENEM.' : 'Configure a data da prova em Ajustes.'}</p></div>
+      ${p.diasProva > 0 ? `<div class="crono-nums">
+        <div><b>${p.diasProva}</b><span>dias para o ENEM</span></div>
+        <div><b>${diasEstudo}</b><span>dias de estudo</span></div>
+        <div><b>${NOME_FASE[faseDe(h, p.fimNovas)]}</b><span>fase atual</span></div></div>` : ''}
+    </div>
     ${cardFoco()}
-
-    ${cardRedacao(p)}
-    ${cardDesafio(p, f)}
-
+    ${agendaHTML(p, f, itens)}
     <section class="card">
-      <div class="titulo-linha"><h2>Esta semana</h2><a class="small" href="#/ajustes">Mudar metas</a></div>
+      <div class="titulo-linha"><h2>Esta semana</h2><a class="small" href="#/ajustes">Mudar dias e metas</a></div>
       ${semanaHTML(p)}
     </section>
-
-    <section class="card">
-      <h2>Seu caminho</h2>
-      <div class="barra"><i style="width:${Math.max(1, pctTotal)}%"></i></div>
-      <p class="small muted" style="margin:6px 0 10px">${pctTotal}% das questões feitas${sequencia() > 1 ? ` · 🔥 ${sequencia()} dias seguidos` : ''}</p>
-      <p style="margin:0">${p.retaFinal ? 'Fase de revisão: agora o foco é só o caderno de erros. Você chegou lá!'
-        : pt.real && pt.fimNovas && pt.fimNovas <= p.fimNovas
-          ? `No seu ritmo, você termina as questões novas em <b>${mesAno(pt.fimNovas)}</b>, antes do que planejou. 💪`
-          : `Seguindo as metas do dia, você termina as questões novas em <b>${mesAno(p.fimNovas)}</b>${st.cfg.folgaFinal ? ' e ainda sobra tempo só para revisar antes da prova' : ', a tempo da prova'}.`}</p>
-    </section>
-
-    <section class="card">
-      <h2>Como funciona?</h2>
-      <p class="small muted">Você faz todas as questões de 2010 a 2025, uma vez. Acertou → sai da fila. Errou (ou chutou) → vai pro caderno de erros e volta em 1, 3, 7 e 21 dias até você acertar 4 vezes seguidas.</p>
-      <a href="#/logica">Ver a lógica completa →</a>
-    </section>
+    ${prontidaoHTML()}
+    ${planoAteProvaHTML(p)}
+    <p class="small muted" style="text-align:center">Como o cronograma é calculado? <a href="#/logica">Ver a lógica completa →</a></p>
   `;
-  $app.querySelector('[data-acao=bloco]')?.addEventListener('click', pb.ir);
-  $app.querySelector('[data-acao=continuar]')?.addEventListener('click', () => retomar('normal'));
-  $app.querySelector('[data-acao=cont-rev]')?.addEventListener('click', () => retomar('rev'));
-  $app.querySelector('[data-acao=rapido]')?.addEventListener('click', () => iniciar(5));
-  $app.querySelector('[data-acao=revisar]')?.addEventListener('click', () => iniciar(p.vencidas, 'rev'));
-  $app.querySelectorAll('[data-acao=redacao], [data-acao=red-bonus]').forEach(b => b.addEventListener('click', abrirRedacaoDoDia));
-  $app.querySelector('[data-acao=red-feita]')?.addEventListener('click', () => {
+  $app.querySelectorAll('[data-ir]').forEach(b => b.addEventListener('click', () => itens.find(x => x.id === b.dataset.ir)?.botao?.ir?.()));
+  $app.querySelector('[data-ag=red-feita]')?.addEventListener('click', () => {
     if (!confirm('Marcar a redação de hoje como feita (sem mandar para a correção)?')) return;
     (red.feitas ||= []).push(h); salvarRed(); rota();
   });
-  $app.querySelector('[data-acao=red-adiar]')?.addEventListener('click', () => { (red.adiadas ||= []).push(h); salvarRed(); rota(); });
-  ligarDesafio(p);
+  $app.querySelector('[data-ag=red-adiar]')?.addEventListener('click', () => { (red.adiadas ||= []).push(h); salvarRed(); rota(); });
+  $app.querySelector('[data-ag=sim-adiar]')?.addEventListener('click', () => { (st.simAdiados ||= []).push(h); st.simAdiados = st.simAdiados.slice(-30); salvar(); rota(); });
   ligarTreinar();
 }
+
+// ---------------------------------------------------------------- questões (responder livremente)
+function telaQuestoes() {
+  const emAndamento = sessaoDe('normal'), revAberta = sessaoDe('rev');
+  const lg = st.log[hoje()] || { n: 0, r: 0, ok: 0 };
+  const tot = lg.n + lg.r;
+  const nVenc = vencidas().length;
+  const areas = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS;
+  $app.innerHTML = `
+    <div class="titulo-linha"><h1>Questões</h1><span class="small muted">${tot ? `hoje: ${tot} ${tot === 1 ? 'questão' : 'questões'} · ${pct(lg.ok, tot)}% de acerto` : 'nenhuma questão hoje ainda'}</span></div>
+    <p class="muted" style="margin-top:0">Responda à vontade, sem plano. Tudo o que você fizer aqui conta no cronograma.</p>
+    ${cardFoco()}
+    <section class="card destaque">
+      ${emAndamento ? `<button class="btn primario grande" data-q="continuar">Continuar bloco (${emAndamento.i + 1}/${emAndamento.itens.length})</button>` : ''}
+      <label class="campo" style="margin-top:${emAndamento ? 14 : 0}px">Bloco de questões (novas + revisões do dia)</label>
+      <div class="opcoes">${[5, 10, 15, 20, 30].map(n => `<button class="op ${n === st.cfg.bloco ? 'on' : ''}" type="button" data-bloco="${n}">${n}</button>`).join('')}</div>
+      <div class="linha-btns">
+        <button class="btn ${emAndamento ? '' : 'primario'} grande" data-q="bloco">Começar bloco de ${st.cfg.bloco}</button>
+      </div>
+      <div class="linha-btns">
+        <button class="btn" data-q="rapido">⚡ 5 rapidinhas</button>
+        ${revAberta ? `<button class="btn" data-q="cont-rev">↺ Continuar correção (${revAberta.i + 1}/${revAberta.itens.length})</button>`
+          : nVenc ? `<button class="btn" data-q="revisar">↺ Só revisões (${nVenc})</button>` : ''}
+        <a class="btn" href="#/simulado">📝 Simulado</a>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Por área</h2>
+      <div class="q-areas">${areas.map(a => `<button class="btn" type="button" data-area-q="${a}">${chipArea(a)}<span class="small muted">${st.cfg.bloco} questões</span></button>`).join('')}</div>
+    </section>
+    ${cardPontosErros()}
+  `;
+  const q = s => $app.querySelector(`[data-q=${s}]`);
+  q('continuar')?.addEventListener('click', () => retomar('normal'));
+  q('bloco').addEventListener('click', () => iniciar(st.cfg.bloco));
+  q('rapido').addEventListener('click', () => iniciar(5));
+  q('cont-rev')?.addEventListener('click', () => retomar('rev'));
+  q('revisar')?.addEventListener('click', () => iniciar(nVenc, 'rev'));
+  $app.querySelectorAll('[data-bloco]').forEach(b => b.addEventListener('click', () => { st.cfg.bloco = +b.dataset.bloco; salvar(); rota(); }));
+  $app.querySelectorAll('[data-area-q]').forEach(b => b.addEventListener('click', () => iniciar(st.cfg.bloco, 'area', b.dataset.areaQ)));
+  ligarTreinar();
+}
+
 function cardFoco() {
   return st.simulado && !st.simulado.fim ? '<section class="card"><p class="aviso" style="margin:0">Você tem um <a href="#/simulado">simulado em andamento</a> — o relógio continua correndo.</p></section>' : '';
 }
@@ -793,15 +999,18 @@ function semanaHTML(p = plano()) {
     else estado = peso ? '' : 'folga';
     const rs = p.redacao?.dias.get(d), rf = p.redacao?.feitas.has(d);
     if (rs && d >= h && !rf) { estado = rs === 'cheia' ? '✍️ redação' : '✍️ + ½'; cls += ' redacao'; }
+    const ss = p.simulados?.dias.get(d), sf = (st.simulados || []).some(x => x.data === d);
+    if (ss && d >= h) { estado = '📝 simulado'; cls += ' redacao'; }
     const larg = meta ? Math.min(100, pct(novas, meta)) : tot ? 100 : 0;
     out += `<div class="${d === h ? 'hoje' : ''} ${!peso ? 'folga' : ''} ${cls}" title="${fmt(d)} · ${nomeNivel(peso)}${meta ? ` · meta: ${meta} novas` : ''}${tot ? ` · ${novas} novas + ${tot - novas} revisões · ${pct(lg.ok, tot)}% de acerto` : ''}">
       <span class="dia">${DIAS_SEMANA[k]}</span>
-      <b>${d > h ? (meta || (rs ? '✍️' : '–')) : meta ? novas : tot || (d < h ? '·' : rs ? '✍️' : '0')}</b>
+      <b>${d > h ? (meta || (rs ? '✍️' : ss ? '📝' : '–')) : meta ? novas : tot || (d < h ? '·' : rs ? '✍️' : ss ? '📝' : '0')}</b>
       ${d <= h && (meta || tot) ? `<span class="mini-barra"><i style="width:${larg}%"></i></span>` : ''}
       <span class="est">${estado}</span>
       ${meta && lg?.r ? `<span class="ac">+${lg.r} rev.</span>` : ''}
       ${tot ? `<span class="ac">${pct(lg.ok, tot)}%</span>` : ''}
       ${rf && d <= h ? '<span class="ac" style="color:var(--ok)">✍️ feita</span>' : ''}
+      ${sf && d <= h ? '<span class="ac" style="color:var(--ok)">📝 feito</span>' : ''}
     </div>`;
   }
   out += '</div>';
@@ -830,10 +1039,13 @@ function proximoBloco(p = plano()) {
   return { rotulo: `Fazer um bloco de ${st.cfg.bloco} questões`, ir: () => iniciar(st.cfg.bloco) };
 }
 function iniciar(tam, tipo, tema, cota) {
+  const de = location.hash === '#/estudar' ? st.sessao?.de || '#/' : location.hash || '#/';
   if (!montarSessao(tam, tipo, tema, cota)) {
     alert(tipo === 'rev' ? 'Nenhuma revisão pendente agora.' : tipo === 'tema' ? 'Você já fez todas as questões desse tema!' : 'Não há questões disponíveis com os filtros atuais. Confira as áreas em Ajustes.');
     return;
   }
+  st.sessao.de = de;
+  salvar();
   // na tela de fim de bloco o hash já é #/estudar: sem hashchange, é preciso redesenhar à mão
   if (location.hash === '#/estudar') rota(); else location.hash = '#/estudar';
 }
@@ -1075,7 +1287,7 @@ function telaFimSessao() {
       <div class="linha-btns" style="justify-content:center">
         ${sessaoDe(grupoSessao(s) === 'rev' ? 'normal' : 'rev') ? `<button class="btn primario" data-acao="outro">${grupoSessao(s) === 'rev' ? 'Continuar o bloco de questões' : 'Continuar a correção'}</button>` : ''}
         <button class="btn ${sessaoDe(grupoSessao(s) === 'rev' ? 'normal' : 'rev') ? '' : 'primario'}" data-acao="mais">${grupoSessao(s) === 'rev' ? 'Corrigir mais' : pb.rotulo.startsWith('Fechar') ? pb.rotulo : 'Mais um bloco'}</button>
-        <a class="btn" href="${grupoSessao(s) === 'rev' ? '#/erros' : '#/'}">Voltar</a>
+        <a class="btn" href="${s.de || (grupoSessao(s) === 'rev' ? '#/erros' : '#/')}">Voltar</a>
       </div>
     </section>
     ${erros.length ? `<section class="card"><h2>Erradas neste bloco</h2><p class="small muted">Elas voltam automaticamente amanhã.</p><ul class="lista">
@@ -1572,7 +1784,11 @@ function telaAjustes() {
       <label class="campo" for="bloco">Tamanho do bloco</label>
       <select id="bloco">${[5, 10, 15, 20, 30].map(n => `<option value="${n}" ${c.bloco === n ? 'selected' : ''}>${n} questões (~${n * 3} min)</option>`).join('')}</select>
       <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="red-crono" ${c.redacao !== false ? 'checked' : ''}> ✍️ Redação no cronograma</label></div>
-      <p class="small muted">Ligado: as redações necessárias para tirar 900+ nos temas de todos os ENEM desde 2010 em até 1 ano (Desafio dos anos, ~2 por mês no começo), no lugar das questões do dia; +1 por mês se você estiver adiantado; dia híbrido (redação + metade da meta) se estiver atrasado; pelo menos 1 por semana na reta final.</p>
+      <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="sim-crono" ${c.simCrono !== false ? 'checked' : ''}> 📝 Simulados no cronograma</label></div>
+      <p class="small muted">Ligado: um simulado curto por semana (de 10 a 30 questões, crescendo com a fase), alternando um misto e um desafio numa matéria em que você tem dificuldade. Ele ocupa o lugar das questões novas do dia.</p>
+      <label class="campo" for="meta-acerto">Alvo de acerto por área (“bom desempenho”)</label>
+      <select id="meta-acerto">${[60, 65, 70, 75, 80, 85].map(n => `<option value="${n}" ${(c.metaAcerto || 70) === n ? 'selected' : ''}>${n}% de acerto de primeira</option>`).join('')}</select>
+      <p class="small muted">Ligado (redação): as redações necessárias para tirar 900+ nos temas de todos os ENEM desde 2011 em até 1 ano (Desafio dos anos, ~2 por mês no começo), no lugar das questões do dia; +1 por mês se você estiver adiantado; dia híbrido (redação + metade da meta) se estiver atrasado; pelo menos 1 por semana na reta final.</p>
     </section>
     <section class="card">
       <h2>Questões</h2>
@@ -1615,6 +1831,8 @@ function telaAjustes() {
   g('ordem').addEventListener('change', e => { c.ordem = e.target.value; salvar(); });
   g('foco').addEventListener('change', e => { c.foco = e.target.checked; salvar(); });
   g('red-crono').addEventListener('change', e => { c.redacao = e.target.checked; if (st.log[hoje()]) delete st.log[hoje()].m; salvar(); });
+  g('sim-crono').addEventListener('change', e => { c.simCrono = e.target.checked; if (st.log[hoje()]) delete st.log[hoje()].m; salvar(); });
+  g('meta-acerto').addEventListener('change', e => { c.metaAcerto = +e.target.value; salvar(); });
   const camposIA = () => {
     const k = iaAtual(), x = IAS[k];
     g('ia-campos').innerHTML = `
@@ -2167,9 +2385,8 @@ const TEMAS_ENEM = [
   [2013, 'Efeitos da implantação da Lei Seca no Brasil'],
   [2012, 'O movimento imigratório para o Brasil no século XXI'],
   [2011, 'Viver em rede no século XXI: os limites entre o público e o privado'],
-  [2010, 'O trabalho na construção da dignidade humana'],
 ];
-// ---- desafio dos anos: uma redação 900+ no tema de cada ENEM desde 2010.
+// ---- desafio dos anos: uma redação 900+ no tema de cada ENEM desde 2011.
 // Referências: redações reais com nota 980–1000 em cada tema (data/referencias.js: autor, nota, link e análise).
 const REFS = window.REFERENCIAS || { anos: [] };
 const normTema = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -2194,7 +2411,7 @@ function desafioAnosHTML() {
   const feitos = TEMAS_ENEM.filter(([a]) => m[a] >= 900).length;
   return `<section class="card" id="anos">
     <div class="titulo-linha"><h2>🏅 Desafio dos anos</h2><span class="small muted">${feitos} de ${TEMAS_ENEM.length} com 900+</span></div>
-    <p class="small muted" style="margin:0 0 10px">900+ no tema de cada ENEM desde 2010. Toque num ano para ver redações reais nota 980–1000.</p>
+    <p class="small muted" style="margin:0 0 10px">900+ no tema de cada ENEM desde 2011. Toque num ano para ver redações reais nota 980–1000.</p>
     <div class="barra" style="margin-bottom:12px"><i style="width:${Math.max(1, pct(feitos, TEMAS_ENEM.length))}%"></i></div>
     <div class="anos-grade">${TEMAS_ENEM.map(([a, t]) => {
       const n = m[a];
@@ -2569,7 +2786,7 @@ function guiaHTML() {
     ${sec('O que zera a redação', `<ul class="red-zeram">${GUIA.zeram.map(z => `<li>${esc(z)}</li>`).join('')}</ul>`)}
     ${sec('O que as notas 1000 têm em comum', `<ul class="lista red-comps">${GUIA.licoes.map(l => `<li><details><summary><span class="tit">${esc(l.titulo)}</span></summary><p class="small" style="margin:6px 0">${esc(l.texto)}</p></details></li>`).join('')}</ul><p>A IA usa essas lições como régua do que é “excelente”; nos temas do Desafio dos anos, usa também as redações reais nota 980–1000 daquele tema.</p>`)}
     ${sec('Folha, foto e tempo real', `<p><b>Folha:</b> 30 linhas como a oficial; cada linha comporta o mesmo que uma linha das redações nota 1000 (em média ${GUIA.media?.palavras || 466} palavras no texto todo). Enter começa parágrafo com recuo; sem corretor ortográfico, como na prova.</p><p><b>Foto:</b> a IA transcreve sua letra; leituras duvidosas só contam como erro no cenário pessimista.</p><p><b>Tempo real:</b> enquanto você escreve, a IA grifa trechos na folha (no máximo uma leitura a cada 40 s). Clique num trecho colorido para ver o comentário.</p>`)}
-    ${sec('Desafio dos anos e cronograma', `<p>Meta: 900+ (média dos dois cenários) no tema de cada ENEM desde 2010. O cronograma marca as redações necessárias para fechar os 16 temas em até 1 ano (hoje ~2 por mês), no lugar das questões do dia — ou num dia híbrido, se você estiver atrasado nas questões.</p>`)}
+    ${sec('Desafio dos anos e cronograma', `<p>Meta: 900+ (média dos dois cenários) no tema de cada ENEM desde 2011. O cronograma marca as redações necessárias para fechar os ${TEMAS_ENEM.length} temas em até 1 ano (hoje ~2 por mês), no lugar das questões do dia — ou num dia híbrido, se você estiver atrasado nas questões.</p>`)}
   </dialog>`;
 }
 
@@ -3007,22 +3224,18 @@ function abrirRedacaoDoDia() {
   location.hash = '#/redacao';
 }
 
-// ---- card de redação na tela Hoje: só aparece no dia em que o cronograma marca redação
-function cardRedacao(p) {
+// meta das redações no cronograma (card "Seu caminho"): 900+ em todos os temas do desafio dos anos
+function caminhoRedacao(p) {
   const rdc = p.redacao;
-  if (!rdc.ligado || !rdc.hoje) return '';
-  const mesNome = parse(hoje()).toLocaleDateString('pt-BR', { month: 'long' });
+  if (!rdc.ligado) return '';
+  const m = placarAnos();
+  const total = TEMAS_ENEM.length;
+  const feitos = TEMAS_ENEM.filter(([a]) => m[a] >= 900).length;
   const rt = rdc.ritmo;
-  const qtd = `<b>${rdc.metaMes} ${rdc.metaMes === 1 ? 'redação' : 'redações'} por mês</b>`;
-  const porque = (rdc.sit === 'reta' ? `Reta final: ${qtd}, pelo menos uma por semana. `
-    : rt.pend ? `${qtd} é o ritmo para tirar 900+ nos <b>${rt.pend} ${rt.pend === 1 ? 'tema' : 'temas'}</b> do Desafio dos anos que faltam, até ${mesAno(rt.prazo)}${rdc.sit === 'adiantado' ? ' (+1 porque você está adiantado nas questões)' : ''}. `
-    : `🏅 Desafio dos anos completo! Agora são ${qtd}, para manter a mão. `)
-    + (rdc.hoje.tipo === 'hibrida' ? 'Como você está um pouco atrás nas questões, hoje é dia híbrido: redação + metade da meta.' : 'A redação ocupa o lugar das questões novas do dia.');
-  const prox = rdc.proxima ? ` Próxima: <b>${DIAS_SEMANA[diaSemana(rdc.proxima.d)].toLowerCase()}, ${fmtCurto(rdc.proxima.d)}</b>.` : '';
-  return `<section class="card">
-    <div class="titulo-linha"><h2>✍️ Redação de hoje</h2><span class="small muted">${mesNome}: ${rdc.feitasMes} de ${rdc.metaMes}</span></div>
-    <p class="small" style="margin:0">${rdc.hoje.feita ? '<span style="color:var(--ok)">✓ Feita!</span> ' : ''}${porque}${rdc.hoje.feita ? prox : ''}</p>
-  </section>`;
+  // no ritmo do cronograma: temas que faltam × tentativas por tema ÷ redações por mês
+  const fim = rt.pend ? somaDias(hoje(), Math.ceil(((rt.pend * TENTATIVAS_900) / rt.n) * 30.4)) : null;
+  return `<div><span class="small muted">Redação — <a href="#/redacao">Desafio dos anos</a></span><div class="barra"><i style="width:${Math.max(1, pct(feitos, total))}%"></i></div>
+    <span class="small">${feitos} de ${total} temas com 900+ · ${rt.pend ? `${rt.n} ${rt.n === 1 ? 'redação' : 'redações'} por mês, fecha todos por volta de <b>${mesAno(fim)}</b>` : '🏅 todos conquistados'}</span></div>`;
 }
 
 // ---------------------------------------------------------------- desafio do dia (estudo)
@@ -3037,42 +3250,49 @@ function respostasHoje() {
   return out;
 }
 const fmtMin = seg => (seg >= 60 ? `${Math.floor(seg / 60)}min${String(Math.round(seg % 60)).padStart(2, '0')}` : `${Math.round(seg)} s`);
+// acao(p, f, arg, R) -> { rotulo, ir() } ou { rotulo, href }: o botão do card leva direto para o desafio
+const faltaN = (alvo, feito) => Math.max(1, alvo - feito);
 const DESAFIOS = [
   { id: 'alem', titulo: 'Passar da meta', se: p => p.hojeEstuda && !p.retaFinal && p.meta > 0,
     texto: p => `faça ${p.meta + 5} questões novas hoje, 5 além da meta.`,
-    prog: (R, p) => ({ feito: p.novasHoje >= p.meta + 5, frac: p.novasHoje / (p.meta + 5), txt: `${p.novasHoje}/${p.meta + 5}` }) },
+    prog: (R, p) => ({ feito: p.novasHoje >= p.meta + 5, frac: p.novasHoje / (p.meta + 5), txt: `${p.novasHoje}/${p.meta + 5}` }),
+    acao: p => { const n = Math.min(30, faltaN(p.meta + 5, p.novasHoje)); return { rotulo: `Fazer ${n} ${n === 1 ? 'nova' : 'novas'}`, ir: () => iniciar(n, 'misto', null, { r: 0 }) }; } },
   { id: 'pontaria', titulo: 'Pontaria', se: () => true,
     texto: () => 'termine o dia com <b>70% de acerto</b> ou mais, em pelo menos 10 questões.',
     prog: R => {
       const n = R.length, a = pct(R.filter(x => x.ok).length, n);
       return { feito: n >= 10 && a >= 70, frac: Math.min(1, n / 10) * Math.min(1, a / 70), txt: n ? `${a}% em ${n}${n < 10 ? `/10` : ''}` : '0/10' };
-    } },
+    },
+    acao: (p, f, a, R) => { const n = R.length < 10 ? 10 - R.length : st.cfg.bloco; return { rotulo: `Fazer ${n} questões`, ir: () => iniciar(n) }; } },
   { id: 'area', titulo: 'Volta pelas áreas', se: () => true,
     arg: (p, n) => { const L = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS; return L[n % L.length]; },
     texto: (p, a) => `responda <b>5 questões de ${AREAS[a]}</b> hoje (novas ou revisões).`,
-    prog: (R, p, f, a) => { const n = R.filter(x => x.q.area === a).length; return { feito: n >= 5, frac: n / 5, txt: `${n}/5` }; } },
+    prog: (R, p, f, a) => { const n = R.filter(x => x.q.area === a).length; return { feito: n >= 5, frac: n / 5, txt: `${n}/5` }; },
+    acao: (p, f, a, R) => { const n = faltaN(5, R.filter(x => x.q.area === a).length); return { rotulo: `Fazer ${n} de ${AREAS[a]}`, ir: () => iniciar(n, 'area', a) }; } },
   { id: 'fraco', titulo: 'Ataque ao ponto fraco', se: () => temasFoco().length > 0,
     arg: () => temasFoco()[0].c,
     texto: (p, c) => `responda <b>5 questões de ${esc(nomeAlvo(c))}</b>, um dos temas em que você mais erra.`,
     prog: (R, p, f, c) => { const n = R.filter(x => noAlvo(temaDe(x.q.id), c)).length; return { feito: n >= 5, frac: n / 5, txt: `${n}/5` }; },
-    botao: c => `<button class="btn" data-treinar="${esc(c)}">Treinar ${esc(nomeAlvo(c))}</button>` },
+    acao: (p, f, c, R) => { const n = faltaN(5, R.filter(x => noAlvo(temaDe(x.q.id), c)).length); return { rotulo: `Treinar ${nomeAlvo(c)}`, ir: () => iniciar(n, 'tema', c) }; } },
   { id: 'revisoes', titulo: 'Caderno em dia', se: (p, f) => f.revs + f.revFaltam >= 3,
     texto: () => 'zere as <b>revisões do dia</b> no caderno de erros.',
     prog: (R, p, f) => ({ feito: f.revFaltam === 0, frac: f.revs / Math.max(1, f.revs + f.revFaltam), txt: `${f.revs}/${f.revs + f.revFaltam}` }),
-    botao: () => '<button class="btn" data-desafio="rev">Fazer as revisões</button>' },
+    acao: p => ({ rotulo: `Fazer as ${p.vencidas} ${p.vencidas === 1 ? 'revisão' : 'revisões'}`, ir: () => (sessaoDe('rev') ? retomar('rev') : iniciar(p.vencidas, 'rev')) }) },
   { id: 'ritmo', titulo: 'Ritmo de prova', se: () => true,
     texto: () => 'responda 10 questões hoje com <b>média de até 3 min</b> por questão (o tempo da prova).',
     prog: R => {
       const n = R.length, media = n ? R.reduce((s, x) => s + x.seg, 0) / n : 0;
       return { feito: n >= 10 && media <= 180, frac: Math.min(1, n / 10) * (media > 180 ? 180 / media : 1), txt: n ? `${Math.min(n, 10)}/10 · média ${fmtMin(media)}` : '0/10' };
-    } },
+    },
+    acao: (p, f, a, R) => { const n = R.length < 10 ? 10 - R.length : st.cfg.bloco; return { rotulo: `Fazer ${n} no tempo de prova`, ir: () => iniciar(n) }; } },
   { id: 'certeza', titulo: 'Sem chutar', se: () => true,
     texto: () => 'responda <b>10 questões sem chute</b> e sem “não sei” — só o que você sabe resolver.',
-    prog: R => { const n = R.filter(x => !x.chute && x.letra !== '?').length; return { feito: n >= 10, frac: n / 10, txt: `${n}/10` }; } },
+    prog: R => { const n = R.filter(x => !x.chute && x.letra !== '?').length; return { feito: n >= 10, frac: n / 10, txt: `${n}/10` }; },
+    acao: (p, f, a, R) => { const n = faltaN(10, R.filter(x => !x.chute && x.letra !== '?').length); return { rotulo: `Fazer ${n} questões`, ir: () => iniciar(n) }; } },
   { id: 'simulado', titulo: 'Mini simulado', se: () => !st.simulado || !!st.simulado.fim,
     texto: () => 'faça um <b>simulado</b> hoje, de qualquer tamanho, com o relógio ligado.',
     prog: () => { const ok = (st.simulados || []).some(x => x.data === hoje()); return { feito: ok, frac: ok ? 1 : 0, txt: ok ? '1/1' : '0/1' }; },
-    botao: () => '<a class="btn" href="#/simulado">Ir para o simulado</a>' },
+    acao: () => ({ rotulo: 'Montar o simulado', href: '#/simulado' }) },
 ];
 function desafioHoje(p, f) {
   const h = hoje();
@@ -3092,24 +3312,6 @@ function seqDesafio() {
   if (!F[d]) d = somaDias(d, -1);
   while (F[d]) { n++; d = somaDias(d, -1); }
   return n;
-}
-function cardDesafio(p, f) {
-  const h = hoje();
-  const { def, arg } = desafioHoje(p, f);
-  const pr = def.prog(respostasHoje(), p, f, arg);
-  if (pr.feito && !st.desafiosFeitos?.[h]) { (st.desafiosFeitos ||= {})[h] = 1; salvar(); }
-  const feito = !!st.desafiosFeitos?.[h];
-  const seq = seqDesafio();
-  return `<section class="card desafio-dia ${feito ? 'feito' : ''}">
-    <div class="titulo-linha"><h2>🎯 Desafio do dia</h2>${seq > 1 ? `<span class="small muted">🔥 ${seq} dias seguidos</span>` : ''}</div>
-    <p style="margin:0 0 10px"><b>${esc(def.titulo)}:</b> ${def.texto(p, arg)}</p>
-    <div class="desafio-prog"><div class="barra"><i style="width:${Math.round(100 * Math.max(0, Math.min(1, feito ? 1 : pr.frac)))}%"></i></div>
-      <span class="small">${feito ? '<b style="color:var(--ok)">✓ Cumprido!</b>' : esc(pr.txt)}</span></div>
-    ${!feito && def.botao ? `<div class="linha-btns" style="margin-top:10px">${def.botao(arg)}</div>` : ''}
-  </section>`;
-}
-function ligarDesafio(p) {
-  $app.querySelector('[data-desafio=rev]')?.addEventListener('click', () => iniciar(p.vencidas, 'rev'));
 }
 
 // ---------------------------------------------------------------- rotas
@@ -3133,6 +3335,7 @@ function rota() {
   else if (pagina === 'ajustes') telaAjustes();
   else if (pagina === 'logica') telaLogica();
   else if (pagina === 'redacao') telaRedacao(arg);
+  else if (pagina === 'questoes') telaQuestoes();
   else if (pagina === 'ver' && BYID[arg]) verQuestao(arg);
   else telaInicio();
 }

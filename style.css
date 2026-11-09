@@ -541,3 +541,61 @@ mark.m.sel, mark.m:focus-visible { outline: 2px solid var(--text); outline-offse
 .logica-sec[open] > summary::after { content: ' ▾'; }
 .logica-corpo { padding: 0 16px 12px; font-size: 14px; }
 .logica-corpo p { margin: 0 0 8px; line-height: 1.7; }
+
+/* meta das redações no card "Seu caminho" */
+.caminho-red { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+/* ---------- cronograma (tela inicial) ---------- */
+.crono-topo { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 4px 0 12px; }
+.crono-topo h1 { margin: 0 0 2px; }
+.crono-nums { display: flex; gap: 8px; }
+.crono-nums > div { min-width: 92px; padding: 8px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); text-align: center; }
+.crono-nums b { display: block; font-size: 20px; line-height: 1.2; font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; }
+.crono-nums span { font-size: 12px; color: var(--muted); }
+@media (max-width: 520px) { .crono-nums { width: 100%; } .crono-nums > div { flex: 1; min-width: 0; padding: 6px 4px; } .crono-nums b { font-size: 16px; } }
+
+.agenda h2 { margin-bottom: 6px; }
+.ag-lista { list-style: none; margin: 8px 0 0; padding: 0; }
+.ag-item { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.ag-icone { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--azul-claro); color: var(--azul); font-size: 17px; font-weight: 700; }
+.ag-item.feito .ag-icone { background: var(--ok-bg); color: var(--ok); }
+.ag-item.feito .ag-texto b { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 50%, transparent); }
+.ag-item.opcional .ag-icone { background: var(--aviso-bg); color: var(--aviso); }
+.ag-texto { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ag-texto .chip { font-size: 11px; padding: 0 6px; vertical-align: 1px; }
+.ag-texto .small { color: var(--text); opacity: .85; }
+.ag-acoes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.barra.fina { height: 5px; margin-top: 4px; display: block; }
+@media (max-width: 560px) {
+  .ag-item { grid-template-columns: 32px minmax(0, 1fr); }
+  .ag-icone { width: 32px; height: 32px; }
+  .ag-acoes { grid-column: 2; justify-content: flex-start; }
+}
+
+/* quanto falta para um bom desempenho */
+.pr-lista { display: grid; gap: 10px; }
+.pr-linha { display: grid; grid-template-columns: 118px minmax(0, 1fr) 150px; align-items: center; gap: 12px; }
+.pr-barra { position: relative; height: 10px; border-radius: 99px; background: var(--line); }
+.pr-barra > i { display: block; height: 100%; border-radius: 99px; background: var(--aviso); }
+.pr-barra > i.ok { background: var(--ok); }
+.pr-barra > b { position: absolute; top: -4px; width: 3px; height: 18px; margin-left: -1px; border-radius: 2px; background: var(--text); }
+.pr-num { font-size: 14px; text-align: right; white-space: nowrap; }
+.pr-ok { color: var(--ok); }
+@media (max-width: 520px) { .pr-linha { grid-template-columns: 98px minmax(0, 1fr); } .pr-num { grid-column: 2; text-align: left; margin-top: -6px; } }
+
+/* plano até o ENEM: fases na linha do tempo */
+.fases { display: flex; gap: 4px; }
+.fase { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
+.fase-nome { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fase-data { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fase.atual { background: var(--azul-claro); border-color: var(--azul); }
+.fase.atual .fase-nome { color: var(--azul); }
+.fase.reta { min-width: 92px; }
+.plano-metas { display: grid; gap: 14px; }
+.plano-metas .barra { margin: 4px 0; }
+
+/* aba questões */
+.q-areas { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.q-areas .btn { flex-direction: column; gap: 4px; padding: 12px; }
+.ag-texto > .chip { align-self: flex-start; }
+.ag-texto > .barra.fina { flex: none; width: 100%; max-width: 280px; height: 5px; margin-top: 6px; }

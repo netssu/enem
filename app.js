@@ -317,95 +317,114 @@ function embaralhar(l) {
   for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
   return l;
 }
-// cota (opcional): { r } = quantas revisões entram no bloco misto; o resto são novas (usado no "Fechar o dia")
-function montarSessao(tam, tipo = 'misto', tema = null, cota = null) {
+// ---------------------------------------------------------------- blocos
+// Cada bloco tem UM tipo, e cada tipo guarda o seu próprio andamento (dá para pausar um e começar outro):
+//   novas → só questões nunca feitas (o "Questões novas" do cronograma)
+//   rev   → só revisões do caderno de erros: as vencidas; sem vencidas, adianta as próximas
+//   misto → novas + revisões vencidas (o bloco livre da aba Questões)
+//   tema / area → treino de um tema ou de uma área (revisões dele + novas dele)
+// Antes de mostrar cada questão o bloco é conferido (podar): sai a questão nova que já foi respondida em outro
+// lugar e a revisão que já foi feita hoje ou que saiu do caderno. Nada se repete, nem num bloco guardado há dias.
+const NOME_BLOCO = { novas: 'questões novas', rev: 'revisões', misto: 'bloco', tema: 'treino de tema', area: 'treino de área' };
+// itens candidatos de cada tipo (só monta; não muda o estado)
+function montarItens(tipo, tam, alvo) {
+  const revItem = q => ({ id: q.id, tipo: 'rev', ...(reg(q.id).prox > hoje() ? { adiantada: true } : {}) });
+  const novaItem = (q, foco) => (foco ? { id: q.id, tipo: 'nova', foco } : { id: q.id, tipo: 'nova' });
+  const intercalar = (R, N) => { const out = []; while (R.length || N.length) { if (N.length) out.push(N.shift()); if (R.length) out.push(R.shift()); } return out; };
   const venc = vencidas();
-  let revs = [];
-  let novas = [];
-  const foco = {};
-  if (tipo === 'tema') {
-    // treinar um tema: revisões vencidas do tema primeiro, depois questões novas dele
-    revs = venc.filter(q => noAlvo(temaDe(q.id), tema)).slice(0, Math.ceil(tam / 2));
-    novas = POOL().filter(q => !feita(q.id) && noAlvo(temaDe(q.id), tema))
-      .sort((a, b) => b.ano - a.ano || a.num - b.num).slice(0, tam - revs.length);
-    if (novas.length + revs.length < tam) {
+  if (tipo === 'rev') return (venc.length ? venc : adiantaveis()).slice(0, tam).map(revItem);
+  if (tipo === 'tema' || tipo === 'area') {
+    const doAlvo = q => (tipo === 'tema' ? noAlvo(temaDe(q.id), alvo) : q.area === alvo);
+    let revs = venc.filter(doAlvo).slice(0, Math.floor(tam / 2));
+    const novas = (tipo === 'tema' ? POOL().filter(q => !feita(q.id)).sort((x, y) => y.ano - x.ano || x.num - y.num) : filaNovas())
+      .filter(doAlvo).slice(0, tam - revs.length);
+    if (revs.length + novas.length < tam) {
       const ja = new Set(revs.map(q => q.id));
-      revs = revs.concat(adiantaveis().filter(q => noAlvo(temaDe(q.id), tema) && !ja.has(q.id)).slice(0, tam - novas.length - revs.length));
+      revs = revs.concat(adiantaveis().filter(q => doAlvo(q) && !ja.has(q.id)).slice(0, tam - revs.length - novas.length));
     }
-    novas.forEach(q => { foco[q.id] = tema; });
-  } else if (tipo === 'area') {
-    // uma área só: metade revisões vencidas da área, o resto questões novas dela
-    revs = venc.filter(q => q.area === tema).slice(0, Math.floor(tam / 2));
-    novas = filaNovas().filter(q => q.area === tema).slice(0, tam - revs.length);
-    if (novas.length + revs.length < tam) {
-      const ja = new Set(revs.map(q => q.id));
-      revs = revs.concat(venc.filter(q => q.area === tema && !ja.has(q.id)).slice(0, tam - novas.length - revs.length));
-    }
-  } else if (tipo === 'rev') {
-    const base = venc.length ? venc : adiantaveis();
-    revs = base.slice(0, tam);
-  } else {
-    let cands = filaNovas();
-    const maxRev = cota ? Math.min(cota.r, tam) : cands.length ? Math.ceil(tam / 2) : tam;
-    revs = venc.slice(0, maxRev);
-    const nNovas = tam - revs.length;
-    // reforço: ~1 em cada 3 novas vem dos temas mais fracos
-    const alvo = st.cfg.foco ? temasFoco() : [];
-    if (alvo.length && nNovas >= 2) {
-      const vagas = Math.max(1, Math.round(nNovas / 3));
-      const escolhidas = [];
-      for (let k = 0; k < vagas; k++) {
-        const c = alvo[k % alvo.length].c;
-        const q = cands.find(x => noAlvo(temaDe(x.id), c) && !escolhidas.includes(x));
-        if (q) { escolhidas.push(q); foco[q.id] = c; }
-      }
-      cands = cands.filter(x => !escolhidas.includes(x));
-      novas = cands.slice(0, nNovas - escolhidas.length);
-      // espalha as de reforço no meio das outras
-      escolhidas.forEach((q, k) => novas.splice(Math.min(novas.length, 1 + k * 3), 0, q));
-    } else {
-      novas = cands.slice(0, nNovas);
-    }
+    return intercalar(revs.map(revItem), novas.map(q => novaItem(q, tipo === 'tema' ? alvo : null)));
   }
-  const itens = [];
-  const R = revs.map(q => ({ id: q.id, tipo: 'rev' }));
-  const N = novas.map(q => (foco[q.id] ? { id: q.id, tipo: 'nova', foco: foco[q.id] } : { id: q.id, tipo: 'nova' }));
-  while (R.length || N.length) {
-    if (N.length) itens.push(N.shift());
-    if (R.length) itens.push(R.shift());
+  // novas (com reforço: ~1 em cada 3 vem dos temas mais fracos) e misto (metade revisões vencidas)
+  const revs = tipo === 'misto' ? venc.slice(0, Math.ceil(tam / 2)) : [];
+  const nNovas = tam - revs.length;
+  let cands = filaNovas();
+  const reforco = [];
+  const alvoFoco = st.cfg.foco ? temasFoco() : [];
+  if (alvoFoco.length && nNovas >= 2) {
+    for (let k = 0; k < Math.max(1, Math.round(nNovas / 3)); k++) {
+      const c = alvoFoco[k % alvoFoco.length].c;
+      const q = cands.find(x => noAlvo(temaDe(x.id), c) && !reforco.some(r => r.q === x));
+      if (q) reforco.push({ q, c });
+    }
+    cands = cands.filter(x => !reforco.some(r => r.q === x));
   }
-  if (!itens.length) return false;
-  pausarAtiva();
-  const origem = tipo === 'rev' || tipo === 'tema' ? 'rev' : 'normal';
-  if (st.pausadas) delete st.pausadas[origem];   // começar outro do mesmo tipo substitui o guardado
-  st.sessao = { itens, i: 0, res: [], criada: hoje(), volta: null, origem };
-  salvar();
+  const novas = cands.slice(0, nNovas - reforco.length).map(q => novaItem(q));
+  reforco.forEach((r, k) => novas.splice(Math.min(novas.length, 1 + k * 3), 0, novaItem(r.q, r.c)));
+  return intercalar(revs.map(revItem), novas);
+}
+// o item ainda vale? (só para os que ainda não foram respondidos neste bloco)
+function itemValido(it) {
+  const r = reg(it.id);
+  if (!BYID[it.id]) return false;
+  if (it.tipo === 'nova') return !feita(it.id);
+  if (it.tipo === 'rev') return r?.s === 'rev' && !respondidaHoje(it.id) && (it.adiantada || r.prox <= hoje());
   return true;
 }
-// Há dois tipos de bloco, cada um com o seu andamento: o "normal" (questões novas + revisões do dia,
-// começado no Início) e o de correção ("rev": caderno de erros ou treinar um tema). Começar um guarda o outro.
-function aberta(s) { return !!s && !s.avulsa && s.i < s.itens.length; }
-function grupoSessao(s) {
-  if (!s || s.avulsa) return null;
-  if (s.origem) return s.origem === 'normal' ? 'normal' : 'rev';
-  return s.itens.every(it => it.tipo === 'rev') ? 'rev' : 'normal';   // blocos salvos antes desta versão
+// tira do bloco (da posição atual em diante) o que deixou de valer e as repetições
+function podar(sess) {
+  if (!sess || sess.avulsa) return sess;
+  const vistos = new Set(sess.itens.slice(0, sess.i).map(it => it.id));
+  const itens = sess.itens.slice(0, sess.i), res = sess.res.slice(0, sess.i);
+  for (let k = sess.i; k < sess.itens.length; k++) {
+    const it = sess.itens[k], feitoAqui = !!sess.res[k];
+    if (feitoAqui || (itemValido(it) && !vistos.has(it.id))) { itens.push(it); res.push(sess.res[k]); vistos.add(it.id); }
+  }
+  sess.itens = itens; sess.res = res;
+  return sess;
 }
-function sessaoDe(g) {
-  if (aberta(st.sessao) && grupoSessao(st.sessao) === g) return st.sessao;
-  const pz = st.pausadas?.[g];
-  return aberta(pz) ? pz : null;
+function aberta(sess) { return !!sess && !sess.avulsa && sess.i < sess.itens.length; }
+// blocos salvos antes desta versão: "normal" vira misto
+function tipoDe(sess) { return sess?.tipo || (sess?.origem === 'rev' || sess?.itens?.every(it => it.tipo === 'rev') ? 'rev' : 'misto'); }
+// o bloco em andamento de um tipo (o ativo ou o guardado), já conferido
+function sessaoDe(tipo) {
+  for (const sess of [st.sessao, st.pausadas?.[tipo], tipo === 'misto' ? st.pausadas?.normal : null]) {
+    if (sess && !sess.avulsa && tipoDe(sess) === tipo) { podar(sess); if (aberta(sess)) return sess; }
+  }
+  return null;
+}
+// blocos guardados (de qualquer tipo), para a aba Questões oferecer "Continuar"
+function blocosAbertos() {
+  return ['novas', 'rev', 'misto', 'tema', 'area'].map(t => sessaoDe(t)).filter(Boolean);
 }
 function pausarAtiva() {
-  const s = st.sessao;
-  if (aberta(s)) (st.pausadas ||= {})[grupoSessao(s)] = s;
+  const sess = st.sessao;
+  if (aberta(sess)) (st.pausadas ||= {})[tipoDe(sess)] = sess;
 }
-function retomar(g) {
-  const s = sessaoDe(g);
-  if (!s) return;
-  if (s !== st.sessao) { pausarAtiva(); st.sessao = s; }
-  if (st.pausadas) delete st.pausadas[g];
+function irEstudar() { if (location.hash === '#/estudar') rota(); else location.hash = '#/estudar'; }
+function retomar(tipo) {
+  const sess = sessaoDe(tipo);
+  if (!sess) return;
+  if (sess !== st.sessao) { pausarAtiva(); st.sessao = sess; }
+  if (st.pausadas) { delete st.pausadas[tipo]; if (tipo === 'misto') delete st.pausadas.normal; }
   salvar();
-  if (location.hash === '#/estudar') rota(); else location.hash = '#/estudar';
+  irEstudar();
+}
+// começa um bloco novo do tipo pedido (substitui o guardado do mesmo tipo)
+function iniciar(tam, tipo = 'misto', alvo = null) {
+  const de = location.hash === '#/estudar' ? st.sessao?.de || '#/' : location.hash || '#/';
+  const itens = montarItens(tipo, tam, alvo);
+  if (!itens.length) {
+    alert(tipo === 'rev' ? 'Nenhuma revisão para fazer agora (as que você respondeu hoje só voltam amanhã).'
+      : tipo === 'tema' ? 'Não há questões desse tema para agora.'
+      : tipo === 'area' ? 'Não há questões dessa área para agora.'
+      : 'Não há questões disponíveis com os filtros atuais. Confira as áreas em Ajustes.');
+    return;
+  }
+  pausarAtiva();
+  if (st.pausadas) { delete st.pausadas[tipo]; if (tipo === 'misto') delete st.pausadas.normal; }
+  st.sessao = { tipo, alvo, itens, i: 0, res: [], criada: hoje(), de };
+  salvar();
+  irEstudar();
 }
 function abrirQuestaoAvulsa(id) {
   const r = reg(id);
@@ -824,7 +843,7 @@ function caminhoCaderno() {
 function agendaHoje(p, f) {
   const h = hoje();
   const itens = [];
-  const emAndamento = sessaoDe('normal'), revAberta = sessaoDe('rev');
+  const novasAberta = sessaoDe('novas'), revAberta = sessaoDe('rev');
   const rdc = p.redacao, sim = p.simulados;
   if (sim.hoje) {
     const c = sim.hoje.cfg;
@@ -861,8 +880,8 @@ function agendaHoje(p, f) {
     itens.push({
       id: 'novas', icone: '➕', titulo: 'Questões novas', detalhe: `${p.novasHoje} de ${p.meta}${p.novasHoje > p.meta ? ` (+${p.novasHoje - p.meta})` : ''}`,
       min: falta * 3, feito: falta === 0, frac: p.novasHoje / p.meta,
-      botao: emAndamento ? { rotulo: `Continuar (${emAndamento.i + 1}/${emAndamento.itens.length})`, ir: () => retomar('normal') }
-        : { rotulo: falta && falta <= st.cfg.bloco ? `Fazer as ${falta}` : `Bloco de ${st.cfg.bloco}`, ir: () => iniciar(falta && falta <= st.cfg.bloco ? falta : st.cfg.bloco, 'misto', null, { r: 0 }) },
+      botao: novasAberta ? { rotulo: `Continuar (${novasAberta.i + 1}/${novasAberta.itens.length})`, ir: () => retomar('novas') }
+        : { rotulo: falta && falta <= st.cfg.bloco ? `Fazer as ${falta}` : `Bloco de ${st.cfg.bloco}`, ir: () => iniciar(falta && falta <= st.cfg.bloco ? falta : st.cfg.bloco, 'novas') },
     });
   }
   // desafio do dia: opcional
@@ -956,7 +975,8 @@ function telaInicio() {
 
 // ---------------------------------------------------------------- questões (responder livremente)
 function telaQuestoes() {
-  const emAndamento = sessaoDe('normal'), revAberta = sessaoDe('rev');
+  const emAndamento = sessaoDe('misto'), revAberta = sessaoDe('rev');
+  const outrosAbertos = blocosAbertos().filter(x => tipoDe(x) !== 'misto' && tipoDe(x) !== 'rev');
   const lg = st.log[hoje()] || { n: 0, r: 0, ok: 0 };
   const tot = lg.n + lg.r;
   const nVenc = vencidas().length;
@@ -967,7 +987,8 @@ function telaQuestoes() {
     ${cardFoco()}
     <section class="card destaque">
       ${emAndamento ? `<button class="btn primario grande" data-q="continuar">Continuar bloco (${emAndamento.i + 1}/${emAndamento.itens.length})</button>` : ''}
-      <label class="campo" style="margin-top:${emAndamento ? 14 : 0}px">Bloco de questões (novas + revisões do dia)</label>
+      ${outrosAbertos.map(x => `<button class="btn grande" data-cont="${tipoDe(x)}" style="margin-top:8px">Continuar ${NOME_BLOCO[tipoDe(x)]} (${x.i + 1}/${x.itens.length})</button>`).join('')}
+      <label class="campo" style="margin-top:${emAndamento || outrosAbertos.length ? 14 : 0}px">Bloco de questões (novas + revisões do dia)</label>
       <div class="opcoes">${[5, 10, 15, 20, 30].map(n => `<button class="op ${n === st.cfg.bloco ? 'on' : ''}" type="button" data-bloco="${n}">${n}</button>`).join('')}</div>
       <div class="linha-btns">
         <button class="btn ${emAndamento ? '' : 'primario'} grande" data-q="bloco">Começar bloco de ${st.cfg.bloco}</button>
@@ -986,9 +1007,10 @@ function telaQuestoes() {
     ${cardPontosErros()}
   `;
   const q = s => $app.querySelector(`[data-q=${s}]`);
-  q('continuar')?.addEventListener('click', () => retomar('normal'));
-  q('bloco').addEventListener('click', () => iniciar(st.cfg.bloco));
-  q('rapido').addEventListener('click', () => iniciar(5));
+  q('continuar')?.addEventListener('click', () => retomar('misto'));
+  $app.querySelectorAll('[data-cont]').forEach(b => b.addEventListener('click', () => retomar(b.dataset.cont)));
+  q('bloco').addEventListener('click', () => iniciar(st.cfg.bloco, 'misto'));
+  q('rapido').addEventListener('click', () => iniciar(5, 'misto'));
   q('cont-rev')?.addEventListener('click', () => retomar('rev'));
   q('revisar')?.addEventListener('click', () => iniciar(nVenc, 'rev'));
   $app.querySelectorAll('[data-bloco]').forEach(b => b.addEventListener('click', () => { st.cfg.bloco = +b.dataset.bloco; salvar(); rota(); }));
@@ -1066,31 +1088,13 @@ function textoFalta(f) {
   if (f.revFaltam) partes.push(`${f.revFaltam} ${f.revFaltam === 1 ? 'revisão' : 'revisões'}`);
   return partes.join(' e ');
 }
-// próximo bloco normal: se o que falta para fechar o dia cabe num bloco, o bloco é exatamente isso
-function proximoBloco(p = plano()) {
-  const f = diaHoje(p);
-  if (p.hojeEstuda && !p.retaFinal && f.faltam > 0 && f.faltam <= st.cfg.bloco) {
-    return { rotulo: `Fechar o dia (${f.faltam} ${f.faltam === 1 ? 'questão' : 'questões'})`, ir: () => iniciar(f.faltam, 'misto', null, { r: f.revFaltam }) };
-  }
-  return { rotulo: `Fazer um bloco de ${st.cfg.bloco} questões`, ir: () => iniciar(st.cfg.bloco) };
-}
-function iniciar(tam, tipo, tema, cota) {
-  const de = location.hash === '#/estudar' ? st.sessao?.de || '#/' : location.hash || '#/';
-  if (!montarSessao(tam, tipo, tema, cota)) {
-    alert(tipo === 'rev' ? 'Nenhuma revisão pendente agora.' : tipo === 'tema' ? 'Você já fez todas as questões desse tema!' : 'Não há questões disponíveis com os filtros atuais. Confira as áreas em Ajustes.');
-    return;
-  }
-  st.sessao.de = de;
-  salvar();
-  // na tela de fim de bloco o hash já é #/estudar: sem hashchange, é preciso redesenhar à mão
-  if (location.hash === '#/estudar') rota(); else location.hash = '#/estudar';
-}
-
 // ---------- tela de questão
 function telaEstudar() {
   const s = st.sessao;
   if (!s || !s.itens.length) { location.hash = '#/'; return; }
   if (s.i >= s.itens.length) return telaFimSessao();
+  // confere o bloco antes de mostrar: tira questões que deixaram de valer
+  if (!s.avulsa && !s.res[s.i]) { podar(s); salvar(); if (s.i >= s.itens.length) return telaFimSessao(); }
   const item = s.itens[s.i];
   const q = BYID[item.id];
   if (!q) { s.i++; salvar(); return telaEstudar(); }
@@ -1111,7 +1115,7 @@ function telaEstudar() {
       <div class="info">${chipArea(q.area)} ${rotulo}${res ? ' <span class="chip" title="Você já respondeu: dá para rever, não para mudar">🔒 Respondida</span>' : ''}</div>
       <div class="info"><span class="timer" id="timer">0:00</span>
         <span class="small muted">${s.avulsa ? '' : `${s.i + 1}/${s.itens.length}`}</span>
-        <a class="btn mini" href="${grupoSessao(s) === 'rev' ? '#/erros' : '#/'}" title="Sair (o bloco fica salvo)">Sair</a></div>
+        <a class="btn mini" href="${s.de && s.de !== '#/estudar' ? s.de : '#/'}" title="Sair (o bloco fica salvo)">Sair</a></div>
     </div>
     <div class="q-titulo"><h2>${tituloQ(q)}</h2>
       <span class="ferramentas">${linkProva(q) ? `<a class="btn mini" href="${linkProva(q)}" target="_blank" rel="noopener" title="Abrir a página ${q.pag} da prova original">📄 Prova</a>` : ''}${controlesTamanho()}</span></div>
@@ -1305,9 +1309,6 @@ function telaFimSessao() {
   const total = s.res.filter(Boolean).length;
   const acertos = s.res.filter(r => r && r.ok).length;
   const erros = s.itens.filter((it, k) => s.res[k] && !s.res[k].ok);
-  const p = plano();
-  const fd = diaHoje(p);
-  const pb = proximoBloco(p);
   if (s.avulsa) {
     st.sessao = s.volta;
     salvar();
@@ -1315,23 +1316,26 @@ function telaFimSessao() {
     if (location.hash === alvo) rota(); else location.hash = alvo;
     return;
   }
+  const tipo = tipoDe(s);
+  const outros = blocosAbertos().filter(x => x !== s);
+  const voltar = s.de && s.de !== '#/estudar' ? s.de : '#/';
   $app.innerHTML = `
     <section class="card destaque" style="text-align:center">
-      <h1>${grupoSessao(s) === 'rev' ? 'Correção concluída!' : 'Bloco concluído!'}</h1>
+      <h1>${tipo === 'rev' ? 'Revisões concluídas!' : 'Bloco concluído!'}</h1>
       <p style="font-size:40px;margin:8px 0;font-weight:800">${acertos}/${total}</p>
-      <p class="muted">${total ? `${pct(acertos, total)}% de acerto.` : ''} ${p.hojeEstuda && !p.retaFinal ? (fd.faltam ? `Para fechar o dia: faltam ${textoFalta(fd)}.` : '✓ Dia completo!') : ''}</p>
+      <p class="muted">${total ? `${pct(acertos, total)}% de acerto.` : 'Nenhuma questão respondida.'}</p>
       <div class="linha-btns" style="justify-content:center">
-        ${sessaoDe(grupoSessao(s) === 'rev' ? 'normal' : 'rev') ? `<button class="btn primario" data-acao="outro">${grupoSessao(s) === 'rev' ? 'Continuar o bloco de questões' : 'Continuar a correção'}</button>` : ''}
-        <button class="btn ${sessaoDe(grupoSessao(s) === 'rev' ? 'normal' : 'rev') ? '' : 'primario'}" data-acao="mais">${grupoSessao(s) === 'rev' ? 'Corrigir mais' : pb.rotulo.startsWith('Fechar') ? pb.rotulo : 'Mais um bloco'}</button>
-        <a class="btn" href="${s.de || (grupoSessao(s) === 'rev' ? '#/erros' : '#/')}">Voltar</a>
+        ${outros.length ? `<button class="btn primario" data-acao="outro">Continuar ${NOME_BLOCO[tipoDe(outros[0])]} (${outros[0].i + 1}/${outros[0].itens.length})</button>` : ''}
+        <button class="btn ${outros.length ? '' : 'primario'}" data-acao="mais">${tipo === 'rev' ? 'Mais revisões' : `Mais ${st.cfg.bloco}`}</button>
+        <a class="btn" href="${voltar}">Voltar</a>
       </div>
     </section>
-    ${erros.length ? `<section class="card"><h2>Erradas neste bloco</h2><p class="small muted">Elas voltam automaticamente amanhã.</p><ul class="lista">
+    ${erros.length ? `<section class="card"><h2>Erradas neste bloco</h2><p class="small muted">Elas vão para o caderno de erros e voltam a partir de amanhã.</p><ul class="lista">
       ${erros.map(it => { const q = BYID[it.id]; return `<li><div>${chipArea(q.area)} <span class="tit">${tituloQ(q)}</span></div><button class="btn" data-ver="${q.id}">Rever</button></li>`; }).join('')}
     </ul></section>` : ''}
   `;
-  $app.querySelector('[data-acao=mais]').addEventListener('click', () => (grupoSessao(s) === 'rev' ? iniciar(st.cfg.bloco, 'rev') : pb.ir()));
-  $app.querySelector('[data-acao=outro]')?.addEventListener('click', () => retomar(grupoSessao(s) === 'rev' ? 'normal' : 'rev'));
+  $app.querySelector('[data-acao=mais]').addEventListener('click', () => iniciar(st.cfg.bloco, tipo, s.alvo));
+  $app.querySelector('[data-acao=outro]')?.addEventListener('click', () => retomar(tipoDe(outros[0])));
   $app.querySelectorAll('[data-ver]').forEach(b => b.addEventListener('click', () => { location.hash = '#/ver/' + b.dataset.ver; }));
 }
 
@@ -3294,14 +3298,14 @@ const DESAFIOS = [
   { id: 'alem', titulo: 'Passar da meta', se: p => p.hojeEstuda && !p.retaFinal && p.meta > 0,
     texto: p => `faça ${p.meta + 5} questões novas hoje, 5 além da meta.`,
     prog: (R, p) => ({ feito: p.novasHoje >= p.meta + 5, frac: p.novasHoje / (p.meta + 5), txt: `${p.novasHoje}/${p.meta + 5}` }),
-    acao: p => { const n = Math.min(30, faltaN(p.meta + 5, p.novasHoje)); return { rotulo: `Fazer ${n} ${n === 1 ? 'nova' : 'novas'}`, ir: () => iniciar(n, 'misto', null, { r: 0 }) }; } },
+    acao: p => { const n = Math.min(30, faltaN(p.meta + 5, p.novasHoje)); return { rotulo: `Fazer ${n} ${n === 1 ? 'nova' : 'novas'}`, ir: () => iniciar(n, 'novas') }; } },
   { id: 'pontaria', titulo: 'Pontaria', se: () => true,
     texto: () => 'termine o dia com <b>70% de acerto</b> ou mais, em pelo menos 10 questões.',
     prog: R => {
       const n = R.length, a = pct(R.filter(x => x.ok).length, n);
       return { feito: n >= 10 && a >= 70, frac: Math.min(1, n / 10) * Math.min(1, a / 70), txt: n ? `${a}% em ${n}${n < 10 ? `/10` : ''}` : '0/10' };
     },
-    acao: (p, f, a, R) => { const n = R.length < 10 ? 10 - R.length : st.cfg.bloco; return { rotulo: `Fazer ${n} questões`, ir: () => iniciar(n) }; } },
+    acao: (p, f, a, R) => { const n = R.length < 10 ? 10 - R.length : st.cfg.bloco; return { rotulo: `Fazer ${n} questões`, ir: () => iniciar(n, 'misto') }; } },
   { id: 'area', titulo: 'Volta pelas áreas', se: () => true,
     arg: (p, n) => { const L = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS; return L[n % L.length]; },
     texto: (p, a) => `responda <b>5 questões de ${AREAS[a]}</b> hoje (novas ou revisões).`,
@@ -3322,11 +3326,11 @@ const DESAFIOS = [
       const n = R.length, media = n ? R.reduce((s, x) => s + x.seg, 0) / n : 0;
       return { feito: n >= 10 && media <= 180, frac: Math.min(1, n / 10) * (media > 180 ? 180 / media : 1), txt: n ? `${Math.min(n, 10)}/10 · média ${fmtMin(media)}` : '0/10' };
     },
-    acao: (p, f, a, R) => { const n = R.length < 10 ? 10 - R.length : st.cfg.bloco; return { rotulo: `Fazer ${n} no tempo de prova`, ir: () => iniciar(n) }; } },
+    acao: (p, f, a, R) => { const n = R.length < 10 ? 10 - R.length : st.cfg.bloco; return { rotulo: `Fazer ${n} no tempo de prova`, ir: () => iniciar(n, 'misto') }; } },
   { id: 'certeza', titulo: 'Sem chutar', se: () => true,
     texto: () => 'responda <b>10 questões sem chute</b> e sem “não sei” — só o que você sabe resolver.',
     prog: R => { const n = R.filter(x => !x.chute && x.letra !== '?').length; return { feito: n >= 10, frac: n / 10, txt: `${n}/10` }; },
-    acao: (p, f, a, R) => { const n = faltaN(10, R.filter(x => !x.chute && x.letra !== '?').length); return { rotulo: `Fazer ${n} questões`, ir: () => iniciar(n) }; } },
+    acao: (p, f, a, R) => { const n = faltaN(10, R.filter(x => !x.chute && x.letra !== '?').length); return { rotulo: `Fazer ${n} questões`, ir: () => iniciar(n, 'misto') }; } },
   { id: 'simulado', titulo: 'Mini simulado', se: () => !st.simulado || !!st.simulado.fim,
     texto: () => 'faça um <b>simulado</b> hoje, de qualquer tamanho, com o relógio ligado.',
     prog: () => { const ok = (st.simulados || []).some(x => x.data === hoje()); return { feito: ok, frac: ok ? 1 : 0, txt: ok ? '1/1' : '0/1' }; },

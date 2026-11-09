@@ -1276,12 +1276,6 @@ window.REFERENCIAS = {
      "destaque": "O título com alusão cultural é retomado no desenvolvimento, e a progressão parte da exposição, passa pela privacidade e chega à formação dos jovens."
     }
    ]
-  },
-  {
-   "ano": 2010,
-   "tema": "O trabalho na construção da dignidade humana",
-   "redacoes": [],
-   "aviso": "Não há redações reais de 2010 publicadas com nota 980 ou mais: o INEP só começou a divulgar redações nota 1000 no Guia do Participante de 2012 (com textos de 2011). O que circula de 2010 são modelos sem autor ou textos de cursinho. Use as lições gerais das notas 1000 e as referências dos outros anos."
   }
  ]
 };

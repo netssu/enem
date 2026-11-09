@@ -147,10 +147,10 @@ Aba **Redação**: folha de 30 linhas (padrão), foto da folha ou caixa de texto
 
 ### Desafio dos anos
 
-Objetivo: tirar **900+** no tema de cada ENEM desde 2010 (16 temas). Conta a média dos dois cenários da correção (como a média de dois corretores, em degraus de 20). Cada ano mostra redações **reais** com nota 980–1000 daquele tema (`app/data/referencias.js`), pesquisadas em páginas públicas — sobretudo as Cartilhas/Guias do Participante do INEP, além de Estratégia Vestibulares, Blog do Vestibular, Blog do Enem, Revista Quero, Redação Online, Descomplica e Imaginie. O app guarda só autor, nota, o link para ler o texto na fonte e uma análise curta (introdução, argumentos, proposta, por que funciona); o texto das redações não é copiado. A IA recebe essas análises como régua ao corrigir uma redação do mesmo tema.
+Objetivo: tirar **900+** no tema de cada ENEM desde 2011 (15 temas). Conta a média dos dois cenários da correção (como a média de dois corretores, em degraus de 20). Cada ano mostra redações **reais** com nota 980–1000 daquele tema (`app/data/referencias.js`), pesquisadas em páginas públicas — sobretudo as Cartilhas/Guias do Participante do INEP, além de Estratégia Vestibulares, Blog do Vestibular, Blog do Enem, Revista Quero, Redação Online, Descomplica e Imaginie. O app guarda só autor, nota, o link para ler o texto na fonte e uma análise curta (introdução, argumentos, proposta, por que funciona); o texto das redações não é copiado. A IA recebe essas análises como régua ao corrigir uma redação do mesmo tema.
 
 - 2011–2025: de 5 a 9 redações por ano (91 no total).
-- 2010: nenhuma — o INEP só passou a divulgar redações nota 1000 em 2012 (com textos de 2011), e o que circula de 2010 são modelos sem autor ou de cursinho.
+- 2010 ficou fora do desafio: o INEP só passou a divulgar redações nota 1000 em 2012 (com textos de 2011), e não há redações reais de 2010 com nota 980+ publicadas.
 - 2013: uma das cinco tem nota 980 e outra aparece numa lista de textos nota 1000 sem nota individual (marcada assim no app).
 
 ### Redação no cronograma
@@ -164,7 +164,7 @@ O volume vem do Desafio dos anos: **temas que faltam × 1,5 tentativas por tema 
 | Atrasado | o dia de redação vira **híbrido**: redação + metade da meta de questões |
 | Reta final (só revisão) | pelo menos 4 por mês (1 por semana) |
 
-As redações do mês se espalham igualmente pelo mês (no mês atual, pelos dias que restam), sempre em dia de estudo e com pelo menos 3 dias entre elas. O dia de redação pesa 0 (ou ½, no híbrido) na conta das metas, então as questões daquele dia vão para os outros. O tema sugerido é o próximo ano do desafio: primeiro os nunca tentados (do mais recente ao mais antigo), depois os que ainda não passaram de 900. Redação que passou da data vai para o próximo dia de estudo; "Adiar" pula o dia; "Já fiz no papel" conta como feita. Dá para desligar em Ajustes. Com os 16 anos conquistados, fica 1 por mês para manter a mão.
+As redações do mês se espalham igualmente pelo mês (no mês atual, pelos dias que restam), sempre em dia de estudo e com pelo menos 3 dias entre elas. O dia de redação pesa 0 (ou ½, no híbrido) na conta das metas, então as questões daquele dia vão para os outros. O tema sugerido é o próximo ano do desafio: primeiro os nunca tentados (do mais recente ao mais antigo), depois os que ainda não passaram de 900. Redação que passou da data vai para o próximo dia de estudo; "Adiar" pula o dia; "Já fiz no papel" conta como feita. Dá para desligar em Ajustes. Com os 15 anos conquistados, fica 1 por mês para manter a mão.
 
 Na tela Hoje, o card "✍️ Redação de hoje" só aparece no dia em que o cronograma marca redação.
 
@@ -173,3 +173,27 @@ Na tela Hoje, o card "✍️ Redação de hoje" só aparece no dia em que o cron
 Um desafio de estudo por dia, separado da redação, escolhido no primeiro acesso do dia (em rodízio) entre os que fazem sentido naquele dia: passar 5 da meta, 70% de acerto em 10+ questões, 5 questões de uma área, 5 do tema mais fraco, zerar as revisões do dia, 10 questões com média de até 3 min, 10 questões sem chute nem "não sei", ou um mini simulado. O progresso sai das questões respondidas no dia; cumprido, fica marcado e conta na sequência 🔥 de desafios.
 
 A janelinha da correção em tempo real abre logo acima do trecho clicado (ou abaixo, se não couber na tela); Esc ou clicar fora fecha.
+
+## Cronograma (tela inicial) e aba Questões
+
+A tela inicial virou o **Cronograma**: tudo o que o plano pede para hoje, com tempo estimado e um botão para cada tarefa. A aba **Questões** é para responder livremente (bloco do tamanho que quiser, 5 rapidinhas, só revisões, por área, pontos fracos), sem metas — e tudo o que for feito lá conta no cronograma do mesmo jeito.
+
+### Fases até a prova
+
+| Fase | Quando | O que entra |
+|---|---|---|
+| Base | até 90 dias antes do fim das questões novas | questões novas + revisões; simulado de 15 (ou desafio de 10 numa matéria difícil) por semana |
+| Ritmo de prova | os últimos 90 dias de questões novas | simulados de 20 (ou desafio de 15) no tempo de prova |
+| Reta final | depois das questões novas até a prova | só revisão; simulados de 30 (ou desafio de 20) e 1 redação por semana |
+
+### Simulados no cronograma
+
+Um por semana, no dia de estudo mais forte (empate: o mais perto do fim de semana), nunca no mesmo dia da redação. Semanas alternadas: **misto** (todas as áreas) e **desafio** numa das 3 matérias/temas em que você mais erra (rodízio). Bem menores que o ENEM, no ritmo de 3 min por questão. Antes da reta final usam questões novas e **ocupam o lugar das questões novas do dia** (contam como novas); na reta final usam qualquer questão. Se o dia passar, o simulado vai para o próximo dia de estudo da semana; "Adiar" pula o dia. Dá para desligar em Ajustes.
+
+### Agenda de hoje
+
+Na ordem: simulado (se for o dia), redação (se for o dia), revisões vencidas, questões novas da meta e o desafio do dia (opcional). Cada item mostra o tempo que falta (3 min por questão, 1h15 por redação) e um botão. "Dia completo" quando todos os obrigatórios estão feitos.
+
+### Quanto falta para um bom desempenho
+
+Por área, o acerto de primeira (sem chute e sem "ver como fazer") dos últimos 90 dias — ou de tudo, se houver menos de 30 questões nesse período — comparado com o alvo (70% por padrão, muda em Ajustes). Só aparece com pelo menos 15 questões na área. Redação: a média das últimas 3 correções (média dos dois cenários), com alvo 900.

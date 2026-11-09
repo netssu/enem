@@ -111,6 +111,10 @@ function vencidas() {
     .sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox) || reg(a.id).caixa - reg(b.id).caixa);
 }
 function emRevisao() { return POOL().filter(q => reg(q.id)?.s === 'rev'); }
+// respondida hoje: a memória ainda está fresca, então não volta no mesmo dia (nem adiantando revisões)
+function respondidaHoje(id) { const h = reg(id)?.h; return !!h?.length && h[h.length - 1][0] === hoje(); }
+// revisões que dá para adiantar: do caderno de erros, sem as respondidas hoje, da que vence antes para a depois
+function adiantaveis() { return emRevisao().filter(q => !respondidaHoje(q.id)).sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox)); }
 
 function filaNovas() {
   const areas = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS;
@@ -326,7 +330,7 @@ function montarSessao(tam, tipo = 'misto', tema = null, cota = null) {
       .sort((a, b) => b.ano - a.ano || a.num - b.num).slice(0, tam - revs.length);
     if (novas.length + revs.length < tam) {
       const ja = new Set(revs.map(q => q.id));
-      revs = revs.concat(emRevisao().filter(q => noAlvo(temaDe(q.id), tema) && !ja.has(q.id)).slice(0, tam - novas.length - revs.length));
+      revs = revs.concat(adiantaveis().filter(q => noAlvo(temaDe(q.id), tema) && !ja.has(q.id)).slice(0, tam - novas.length - revs.length));
     }
     novas.forEach(q => { foco[q.id] = tema; });
   } else if (tipo === 'area') {
@@ -338,7 +342,7 @@ function montarSessao(tam, tipo = 'misto', tema = null, cota = null) {
       revs = revs.concat(venc.filter(q => q.area === tema && !ja.has(q.id)).slice(0, tam - novas.length - revs.length));
     }
   } else if (tipo === 'rev') {
-    const base = venc.length ? venc : emRevisao().sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox));
+    const base = venc.length ? venc : adiantaveis();
     revs = base.slice(0, tam);
   } else {
     let cands = filaNovas();
@@ -507,7 +511,10 @@ function salvarTinta() {
 // Correção da linha: cada ponto novo é puxado para perto do anterior (estabilizador), pontos muito
 // próximos são ignorados e o traço é desenhado com curvas passando pelos pontos médios.
 const SUAVIZA = 0.4;   // 0..1: quanto o traço segue o ponteiro na hora (menor = mais suave)
-function ligarTinta(id, limpaAntiga) {
+// tentativa: número da tentativa que está na tela (as respostas registradas antes dela). Os rabiscos são de uma
+// tentativa só: quando a questão volta para ser respondida de novo, a folha começa limpa. false = mostra os
+// últimos rabiscos (tela "Rever").
+function ligarTinta(id, tentativa) {
   const folha = $app.querySelector('.folha');
   const area = $app.querySelector('.questao-img');
   const cv = area?.querySelector('canvas.tinta');
@@ -517,7 +524,9 @@ function ligarTinta(id, limpaAntiga) {
   const medir = () => { const a = area.getBoundingClientRect(), f = folha.getBoundingClientRect(); ox = f.left - a.left; oy = f.top - a.top; w = f.width || 1; };
   const ctx = cv.getContext('2d');
   const salvo = tinta[id];
-  const tracos = salvo && (!limpaAntiga || salvo.d === hoje()) ? salvo.t : [];
+  const vale = !!salvo && (tentativa === false || (typeof tentativa === 'number' ? salvo.k === tentativa : salvo.d === hoje()));
+  const tracos = vale ? salvo.t : [];
+  const k = typeof tentativa === 'number' ? tentativa : salvo?.k;
   const bCaneta = $app.querySelector('[data-tinta=caneta]');
   const bDesfazer = $app.querySelector('[data-tinta=desfazer]');
   const bLimpar = $app.querySelector('[data-tinta=limpar]');
@@ -565,7 +574,7 @@ function ligarTinta(id, limpaAntiga) {
     if (bLimpar) bLimpar.hidden = !tracos.length;
     area.classList.toggle('tem-tinta', tracos.length > 0);
   };
-  const guardar = () => { if (tracos.length) tinta[id] = { d: hoje(), t: tracos }; else delete tinta[id]; salvarTinta(); botoes(); };
+  const guardar = () => { if (tracos.length) tinta[id] = { d: hoje(), t: tracos, ...(k !== undefined ? { k } : {}) }; else delete tinta[id]; salvarTinta(); botoes(); };
   const ro = new ResizeObserver(desenhar);
   ro.observe(folha);
   ro.observe(area);
@@ -629,8 +638,8 @@ function controlesTamanho() {
     <button class="btn mini caneta" data-tinta="caneta" aria-pressed="false" title="Escrever com o dedo na folha">✏️ Escrever</button>
     <button class="btn mini" data-esc="-1" title="Diminuir">A−</button><button class="btn mini" data-esc="1" title="Aumentar">A+</button></span>`;
 }
-function ligarTamanho(id, limpaAntiga = true) {
-  if (id) ligarTinta(id, limpaAntiga);
+function ligarTamanho(id, tentativa = true) {
+  if (id) ligarTinta(id, tentativa);
   document.querySelectorAll('[data-esc]').forEach(b => b.addEventListener('click', () => {
     st.cfg.escala = Math.min(3.2, Math.max(1, Math.round(((st.cfg.escala || 1.75) + 0.2 * +b.dataset.esc) * 100) / 100));
     salvar();
@@ -791,11 +800,24 @@ function planoAteProvaHTML(p) {
     <div class="plano-metas">
       <div><span class="small muted">Questões novas</span><div class="barra"><i style="width:${Math.max(1, pctQ)}%"></i></div>
         <span class="small">${p.feitas} de ${p.total} · ${p.retaFinal ? 'fase de revisão' : pt.real && pt.fimNovas && pt.fimNovas <= p.fimNovas ? `no seu ritmo, termina em <b>${mesAno(pt.fimNovas)}</b> 💪` : `termina em <b>${mesAno(p.fimNovas)}</b> seguindo as metas`}</span></div>
+      ${caminhoCaderno()}
       ${caminhoRedacao(p)}
       ${sims.ligado ? `<div><span class="small muted">Simulados</span><div class="barra"><i style="width:${Math.max(1, pct(sims.feitos, sims.feitos + sims.dias.size))}%"></i></div>
         <span class="small">${sims.feitos} feitos · ${sims.dias.size} até a prova${sims.proximo ? ` · próximo: <b>${DIAS_SEMANA[diaSemana(sims.proximo.d)].toLowerCase()}, ${fmtCurto(sims.proximo.d)}</b> (${esc(sims.proximo.cfg.rotulo)})` : ''}</span></div>` : ''}
     </div>
   </section>`;
+}
+
+// caderno de erros: quantas das questões que entraram nele já foram recuperadas (4 acertos seguidos)
+function caminhoCaderno() {
+  let rev = 0, rec = 0, caixas = 0;
+  for (const q of POOL()) { const r = reg(q.id); if (r?.s === 'rev') { rev++; caixas += (r.caixa || 1) - 1; } else if (r?.s === 'rec') rec++; }
+  const total = rev + rec;
+  if (!total) return '';
+  // progresso fino: cada acerto numa revisão sobe uma caixa (de 1 a 4); recuperada = 4 caixas
+  const passos = rec * CAIXA_MAX + caixas + rev, max = total * CAIXA_MAX;
+  return `<div><span class="small muted">Caderno de erros</span><div class="barra"><i style="width:${Math.max(1, pct(passos, max))}%"></i></div>
+    <span class="small">${rec} de ${total} ${total === 1 ? 'recuperada' : 'recuperadas'} · ${rev} em revisão · cada acerto numa revisão avança a barra</span></div>`;
 }
 
 // ---- agenda de hoje: tudo o que o cronograma pede, com tempo e um botão para cada coisa
@@ -824,11 +846,16 @@ function agendaHoje(p, f) {
       extra: rdc.hoje.feita ? '' : '<button class="btn fantasma mini" type="button" data-ag="red-feita">Já fiz no papel</button><button class="btn fantasma mini" type="button" data-ag="red-adiar">Adiar</button>',
     });
   }
-  if (f.revs + f.revFaltam > 0) itens.push({
-    id: 'rev', icone: '↺', titulo: 'Revisões do caderno de erros', detalhe: `${f.revs} de ${f.revs + f.revFaltam}`,
-    min: f.revFaltam * 3, feito: f.revFaltam === 0, frac: f.revs / (f.revs + f.revFaltam),
-    botao: revAberta ? { rotulo: `Continuar (${revAberta.i + 1}/${revAberta.itens.length})`, ir: () => retomar('rev') } : { rotulo: 'Fazer', ir: () => iniciar(p.vencidas, 'rev') },
-  });
+  if (f.revs + f.revFaltam > 0) {
+    const mais = f.revFaltam === 0 && !revAberta ? adiantaveis().length : 0;
+    itens.push({
+      id: 'rev', icone: '↺', titulo: 'Revisões do caderno de erros',
+      detalhe: f.revFaltam ? `${f.revs} de ${f.revs + f.revFaltam}` : `${f.revs} ${f.revs === 1 ? 'feita' : 'feitas'} hoje · caderno em dia`,
+      min: f.revFaltam * 3, feito: f.revFaltam === 0, frac: f.revs / (f.revs + f.revFaltam),
+      botao: revAberta ? { rotulo: `Continuar (${revAberta.i + 1}/${revAberta.itens.length})`, ir: () => retomar('rev') } : { rotulo: 'Fazer', ir: () => iniciar(p.vencidas, 'rev') },
+      extra: mais ? `<button class="btn mini" type="button" data-ag="adiantar">Adiantar mais (${Math.min(mais, st.cfg.bloco)})</button>` : '',
+    });
+  }
   if (!p.retaFinal && p.meta > 0) {
     const falta = Math.max(0, p.meta - p.novasHoje);
     itens.push({
@@ -852,6 +879,13 @@ function agendaHoje(p, f) {
   });
   return itens;
 }
+// o que já foi feito hoje (todas as respostas, de qualquer aba)
+function resumoDia() {
+  const lg = st.log[hoje()] || { n: 0, r: 0, ok: 0 };
+  const tot = lg.n + lg.r;
+  if (!tot) return '';
+  return `<p class="small muted" style="margin:0 0 4px">Hoje: <b>${tot}</b> ${tot === 1 ? 'resposta' : 'respostas'} (${lg.n} ${lg.n === 1 ? 'nova' : 'novas'}, ${lg.r} ${lg.r === 1 ? 'revisão' : 'revisões'}) · ${pct(lg.ok, tot)}% de acerto</p>`;
+}
 function agendaHTML(p, f, itens) {
   const obrig = itens.filter(x => !x.opcional);
   const feitos = obrig.filter(x => x.feito).length;
@@ -866,6 +900,7 @@ function agendaHTML(p, f, itens) {
     <div class="titulo-linha"><h2>Hoje</h2>${seq > 1 ? `<span class="small muted">🔥 ${seq} dias de desafio seguidos</span>` : ''}</div>
     ${obrig.length ? `<div class="barra" style="margin:2px 0 10px"><i style="width:${Math.max(2, pct(feitos, obrig.length))}%"></i></div>` : ''}
     <p class="small" style="margin:0 0 6px">${cab}</p>
+    ${resumoDia()}
     <ul class="ag-lista">${itens.map(x => `<li class="ag-item ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">
       <span class="ag-icone">${x.feito ? '✓' : x.icone}</span>
       <div class="ag-texto"><b>${esc(x.titulo)}</b>${x.opcional ? ' <span class="chip">opcional</span>' : ''}<span class="small">${x.detalhe}</span>
@@ -914,6 +949,7 @@ function telaInicio() {
     (red.feitas ||= []).push(h); salvarRed(); rota();
   });
   $app.querySelector('[data-ag=red-adiar]')?.addEventListener('click', () => { (red.adiadas ||= []).push(h); salvarRed(); rota(); });
+  $app.querySelector('[data-ag=adiantar]')?.addEventListener('click', () => iniciar(st.cfg.bloco, 'rev'));
   $app.querySelector('[data-ag=sim-adiar]')?.addEventListener('click', () => { (st.simAdiados ||= []).push(h); st.simAdiados = st.simAdiados.slice(-30); salvar(); rota(); });
   ligarTreinar();
 }
@@ -1094,7 +1130,7 @@ function telaEstudar() {
       </div>
     </div>
   `;
-  ligarTamanho(q.id);
+  ligarTamanho(q.id, (r?.h?.length || 0) - (res && !res.pulou ? 1 : 0));
   // pré-carrega a próxima
   const prox = s.itens[s.i + 1];
   if (prox && BYID[prox.id]) BYID[prox.id].imgs.forEach(src => { const im = new Image(); im.src = src; });
@@ -1328,14 +1364,16 @@ function verQuestao(id) {
 function telaErros() {
   const venc = vencidas();
   const todas = emRevisao().sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox));
+  const adiantar = adiantaveis();
   const rec = POOL().filter(q => reg(q.id)?.s === 'rec').length;
   const h = hoje();
   const tam = st.cfg.bloco;
   let msg;
   if (venc.length) msg = `Você tem <b>${venc.length} ${venc.length === 1 ? 'questão' : 'questões'}</b> para refazer hoje.`;
+  else if (todas.length && !adiantar.length) msg = 'Nada vence hoje, e as que você respondeu hoje só voltam a partir de amanhã — com a memória fresca, refazer não conta.';
   else if (todas.length) {
     const d = diffDias(h, reg(todas[0].id).prox);
-    msg = `Nada vence hoje. A próxima revisão é ${d === 1 ? 'amanhã' : `em ${dias(d)}`} — se quiser, adiante.`;
+    msg = `Nada vence hoje. A próxima revisão é ${d === 1 ? 'amanhã' : `em ${dias(d)}`} — se quiser, adiante (as respondidas hoje ficam de fora).`;
   } else msg = 'Seu caderno de erros está vazio. Quando você errar ou pedir ajuda numa questão, ela aparece aqui.';
   let semana = '<div class="semana">';
   for (let k = 0; k < 7; k++) {
@@ -1353,9 +1391,9 @@ function telaErros() {
       <h2>Refazer agora</h2>
       <p>${msg}</p>
       ${revAberta ? `<div class="linha-btns"><button class="btn primario grande" data-acao="cont-rev">Continuar correção (${revAberta.i + 1}/${revAberta.itens.length})</button></div>` : ''}
-      ${todas.length ? `
+      ${venc.length || adiantar.length ? `
       <div class="linha-btns">
-        ${revAberta ? '' : `<button class="btn primario grande" data-acao="bloco">${venc.length ? `Refazer ${n1} ${n1 === 1 ? 'questão' : 'questões'}` : `Adiantar ${Math.min(todas.length, tam)} revisões`}</button>`}
+        ${revAberta ? '' : `<button class="btn primario grande" data-acao="bloco">${venc.length ? `Refazer ${n1} ${n1 === 1 ? 'questão' : 'questões'}` : `Adiantar ${Math.min(adiantar.length, tam)} revisões`}</button>`}
       </div>
       <div class="linha-btns"><button class="btn" data-acao="rapido">⚡ Só 5 rapidinhas</button></div>
       <p class="small muted" style="margin-bottom:0">Acertou → volta em 3, 7 e 21 dias. Acertou 4 vezes seguidas → sai do caderno.</p>` : ''}
@@ -1448,7 +1486,7 @@ function fmtTempo(s) {
 function candidatosSim(c) {
   return POOL().filter(q => c.areas.includes(q.area)
     && (!c.materia || `${q.area}|${materiaDe(temaDe(q.id))}` === c.materia)
-    && (c.origem === 'todas' || (c.origem === 'erros' ? reg(q.id)?.s === 'rev' : !feita(q.id))));
+    && (c.origem === 'todas' ? !respondidaHoje(q.id) : c.origem === 'erros' ? reg(q.id)?.s === 'rev' && !respondidaHoje(q.id) : !feita(q.id)));
 }
 function telaSimulado() {
   const sim = st.simulado;
@@ -1562,7 +1600,7 @@ function provaSimulado() {
       </div>
     </div>
   `;
-  ligarTamanho(q.id);
+  ligarTamanho(q.id, reg(q.id)?.h?.length || 0);
   const prox = sim.ids[sim.i + 1];
   if (prox) BYID[prox].imgs.forEach(src => { const im = new Image(); im.src = src; });
   const ir = k => { contarTempo(); sim.i = Math.max(0, Math.min(total - 1, k)); salvar(); window.scrollTo(0, 0); rota(); };

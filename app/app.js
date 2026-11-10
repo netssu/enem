@@ -19,9 +19,18 @@ function rotuloTema(c) { return c ? `${materiaDe(c)} › ${nomeTema(c)}` : ''; }
 // um "alvo" de treino é um tema ("QUI.est") ou uma matéria inteira ("QUI")
 function noAlvo(c, alvo) { return !!c && (alvo.includes('.') ? c === alvo : c.startsWith(alvo + '.')); }
 function nomeAlvo(alvo) { return alvo.includes('.') ? nomeTema(alvo) : materiaDe(Object.keys(TEMAS.nomes).find(c => noAlvo(c, alvo))); }
-// Caixas de revisão (sistema Leitner): depois de acertar na caixa N, a próxima revisão é em INTERVALO[N] dias.
-const INTERVALO = { 1: 1, 2: 3, 3: 7, 4: 21 };
+// Caixas de revisão (sistema Leitner): errou → caixa 1; cada acerto numa revisão sobe uma caixa. A volta é bem espaçada
+// para dar tempo de esquecer a alternativa que você marcou (texto de Linguagens/Humanas gruda mais na memória, então
+// espera mais). Enquanto a errada espera, o reforço traz questões NOVAS do mesmo tema.
+const INTERVALOS = { hum: { 1: 14, 2: 21, 3: 30, 4: 45 }, exa: { 1: 7, 2: 14, 3: 30, 4: 45 } };
 const CAIXA_MAX = 4;
+// dias até a próxima revisão de uma questão na caixa N; perto da prova encolhe para as revisões que faltam caberem antes dela
+function intervalo(id, caixa) {
+  const a = BYID[id]?.area;
+  const base = INTERVALOS[a === 'LC' || a === 'CH' ? 'hum' : 'exa'][caixa] || 1;
+  const ate = diffDias(hoje(), st.cfg.prova);
+  return Math.max(1, Math.min(base, Math.floor(ate / (CAIXA_MAX - caixa + 2))));
+}
 const MOTIVOS = ['Precisei de ajuda', 'Não sabia o conteúdo', 'Interpretação', 'Desatenção', 'Conta/cálculo', 'Chutei', 'Faltou tempo'];
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
@@ -55,6 +64,7 @@ function padrao() {
     log: {},    // 'AAAA-MM-DD' -> { n: novas, r: revisões, ok: acertos }
     sessao: null,     // bloco ativo
     pausadas: {},     // blocos guardados por tipo: { normal, rev } — um não apaga o outro
+    reforco: [],      // erros esperando reforço: { id da errada, c: tema, d: data do erro }
   };
 }
 function carregar() {
@@ -69,6 +79,16 @@ function carregar() {
 }
 let st = carregar();
 function salvar() { localStorage.setItem(KEY, JSON.stringify(st)); }
+// revisões marcadas com os intervalos antigos (1, 3, 7, 21 dias): reespaça a partir da última resposta (só empurra para depois)
+if (!st.intervalos2) {
+  for (const [id, r] of Object.entries(st.q)) {
+    if (r.s !== 'rev' || !r.h?.length) continue;
+    const p = somaDias(r.h[r.h.length - 1][0], intervalo(id, r.caixa || 1));
+    if (!r.prox || p > r.prox) r.prox = p;
+  }
+  st.intervalos2 = 1;
+  salvar();
+}
 
 let explicacoes = {};
 try { explicacoes = JSON.parse(localStorage.getItem(KEY_EXP)) || {}; } catch { explicacoes = {}; }
@@ -113,8 +133,15 @@ function vencidas() {
 function emRevisao() { return POOL().filter(q => reg(q.id)?.s === 'rev'); }
 // respondida hoje: a memória ainda está fresca, então não volta no mesmo dia (nem adiantando revisões)
 function respondidaHoje(id) { const h = reg(id)?.h; return !!h?.length && h[h.length - 1][0] === hoje(); }
-// revisões que dá para adiantar: do caderno de erros, sem as respondidas hoje, da que vence antes para a depois
-function adiantaveis() { return emRevisao().filter(q => !respondidaHoje(q.id)).sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox)); }
+// dá para adiantar a revisão? só depois de passada metade da espera — antes disso você ainda lembra a alternativa
+function adiantavel(id) {
+  const r = reg(id), h = r?.h;
+  if (!h?.length || !r.prox) return !respondidaHoje(id);
+  const u = h[h.length - 1][0];
+  return diffDias(u, hoje()) * 2 >= diffDias(u, r.prox);
+}
+// revisões que dá para adiantar: do caderno de erros, já na segunda metade da espera, da que vence antes para a depois
+function adiantaveis() { return emRevisao().filter(q => !respondidaHoje(q.id) && adiantavel(q.id)).sort((a, b) => reg(a.id).prox.localeCompare(reg(b.id).prox)); }
 
 function filaNovas() {
   const areas = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS;
@@ -135,6 +162,39 @@ function filaNovas() {
     i++;
   }
   return fila;
+}
+
+// ---- reforço dos erros: cada erro pede UMA questão NOVA do mesmo tema (sem tema sobrando: da matéria; depois da
+// área), para treinar o assunto enquanto a errada espera a revisão. Também avança as questões novas do banco.
+// Qualquer questão nova do mesmo tema respondida em outro bloco cumpre o reforço; erro numa questão de reforço não pede outro.
+const REFORCO_DIAS = 14;   // depois disso o reforço caduca (a revisão da errada já está chegando)
+function pedirReforco(id) {
+  const lim = somaDias(hoje(), -REFORCO_DIAS);
+  st.reforco = (st.reforco || []).filter(e => e.d > lim && e.id !== id);
+  st.reforco.push({ id, c: temaDe(id), d: hoje() });
+}
+function tirarReforco(id) { if (st.reforco) st.reforco = st.reforco.filter(e => e.id !== id); }
+// respondeu a questão nova `id`: cumpre o reforço `ref` (bloco de reforço) ou o mais antigo do mesmo tema
+function cumprirReforco(id, ref) {
+  const lista = st.reforco || [], c = temaDe(id);
+  const k = ref ? lista.findIndex(e => e.id === ref) : c ? lista.findIndex(e => e.c === c && e.id !== id) : -1;
+  if (k < 0) return;
+  lista.splice(k, 1);
+  const lg = st.log[hoje()] || (st.log[hoje()] = { n: 0, r: 0, ok: 0 });
+  lg.f = (lg.f || 0) + 1;
+}
+// reforços em aberto, cada um já com a sua questão nova (sem repetir); os que não têm mais questão ficam de fora
+function reforcosPendentes() {
+  const lim = somaDias(hoje(), -REFORCO_DIAS);
+  const fila = filaNovas(), usadas = new Set(), out = [];
+  const pega = f => { const q = fila.find(x => !usadas.has(x.id) && f(x)); if (q) usadas.add(q.id); return q; };
+  for (const e of st.reforco || []) {
+    if (e.d <= lim) continue;
+    const mat = e.c?.split('.')[0], area = BYID[e.id]?.area;
+    const q = (e.c && pega(x => temaDe(x.id) === e.c)) || (mat && pega(x => temaDe(x.id)?.split('.')[0] === mat)) || pega(x => x.area === area);
+    if (q) out.push({ e, q });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- cronograma
@@ -309,7 +369,7 @@ const DICA_MOTIVO = {
   'Faltou tempo': 'Treine simulados com tempo: ~3 min por questão.',
   'Não sabia o conteúdo': 'Revise a teoria dos seus temas mais fracos (lista acima) antes de fazer mais questões deles.',
   'Chutei': 'Chute é sinal de conteúdo frágil: os temas mais fracos acima são um bom lugar para começar.',
-  'Precisei de ajuda': 'Refaça amanhã sozinho as questões em que pediu ajuda: elas já estão no caderno de erros.',
+  'Precisei de ajuda': 'Refaça sozinho as questões em que pediu ajuda quando elas voltarem na revisão: elas já estão no caderno de erros.',
 };
 
 // ---------------------------------------------------------------- sessão
@@ -321,11 +381,12 @@ function embaralhar(l) {
 // Cada bloco tem UM tipo, e cada tipo guarda o seu próprio andamento (dá para pausar um e começar outro):
 //   novas → só questões nunca feitas (o "Questões novas" do cronograma)
 //   rev   → só revisões do caderno de erros: as vencidas; sem vencidas, adianta as próximas
+//   reforco → uma questão nova do mesmo tema para cada erro recente (ver reforcosPendentes)
 //   misto → novas + revisões vencidas (o bloco livre da aba Questões)
 //   tema / area → treino de um tema ou de uma área (revisões dele + novas dele)
 // Antes de mostrar cada questão o bloco é conferido (podar): sai a questão nova que já foi respondida em outro
 // lugar e a revisão que já foi feita hoje ou que saiu do caderno. Nada se repete, nem num bloco guardado há dias.
-const NOME_BLOCO = { novas: 'questões novas', extras: 'extras', rev: 'revisões', misto: 'bloco', tema: 'treino de tema', area: 'treino de área' };
+const NOME_BLOCO = { novas: 'questões novas', extras: 'extras', rev: 'revisões', reforco: 'reforço', misto: 'bloco', tema: 'treino de tema', area: 'treino de área' };
 // itens candidatos de cada tipo (só monta; não muda o estado)
 function montarItens(tipo, tam, alvo) {
   const revItem = q => ({ id: q.id, tipo: 'rev', ...(reg(q.id).prox > hoje() ? { adiantada: true } : {}) });
@@ -333,6 +394,7 @@ function montarItens(tipo, tam, alvo) {
   const intercalar = (R, N) => { const out = []; while (R.length || N.length) { if (N.length) out.push(N.shift()); if (R.length) out.push(R.shift()); } return out; };
   const venc = vencidas();
   if (tipo === 'rev') return (venc.length ? venc : adiantaveis()).slice(0, tam).map(revItem);
+  if (tipo === 'reforco') return reforcosPendentes().slice(0, tam).map(({ e, q }) => ({ id: q.id, tipo: 'nova', ref: e.id }));
   if (tipo === 'tema' || tipo === 'area') {
     const doAlvo = q => (tipo === 'tema' ? noAlvo(temaDe(q.id), alvo) : q.area === alvo);
     let revs = venc.filter(doAlvo).slice(0, Math.floor(tam / 2));
@@ -366,8 +428,8 @@ function montarItens(tipo, tam, alvo) {
 function itemValido(it) {
   const r = reg(it.id);
   if (!BYID[it.id]) return false;
-  if (it.tipo === 'nova') return !feita(it.id);
-  if (it.tipo === 'rev') return r?.s === 'rev' && !respondidaHoje(it.id) && (it.adiantada || r.prox <= hoje());
+  if (it.tipo === 'nova') return !feita(it.id) && (!it.ref || !!st.reforco?.some(e => e.id === it.ref));
+  if (it.tipo === 'rev') return r?.s === 'rev' && !respondidaHoje(it.id) && (r.prox <= hoje() || (it.adiantada && adiantavel(it.id)));
   return true;
 }
 // quantas questões novas ainda faltam para a meta de hoje
@@ -401,7 +463,7 @@ function sessaoDe(chave) {
 }
 // blocos guardados (de qualquer tipo), para a aba Questões oferecer "Continuar"
 function blocosAbertos() {
-  return ['novas', 'extras', 'rev', 'misto', 'tema', 'area'].map(t => sessaoDe(t)).filter(Boolean);
+  return ['novas', 'extras', 'rev', 'reforco', 'misto', 'tema', 'area'].map(t => sessaoDe(t)).filter(Boolean);
 }
 function pausarAtiva() {
   const sess = st.sessao;
@@ -421,7 +483,8 @@ function iniciar(tam, tipo = 'misto', alvo = null, opcoes = {}) {
   const de = location.hash === '#/estudar' ? st.sessao?.de || '#/' : location.hash || '#/';
   const itens = montarItens(tipo, tam, alvo);
   if (!itens.length) {
-    alert(tipo === 'rev' ? 'Nenhuma revisão para fazer agora (as que você respondeu hoje só voltam amanhã).'
+    alert(tipo === 'rev' ? 'Nenhuma revisão para fazer agora (as que você errou há pouco tempo ainda estão esperando, para você esquecer a resposta).'
+      : tipo === 'reforco' ? 'Nenhum reforço em aberto agora.'
       : tipo === 'tema' ? 'Não há questões desse tema para agora.'
       : tipo === 'area' ? 'Não há questões dessa área para agora.'
       : 'Não há questões disponíveis com os filtros atuais. Confira as áreas em Ajustes.');
@@ -444,53 +507,60 @@ function abrirQuestaoAvulsa(id) {
   location.hash = '#/estudar';
 }
 
-function registrar(id, tipo, letra, segundos, ajuda = false) {
+// ref: id da questão errada que esta (nova) está reforçando, quando vem do bloco de reforço
+function registrar(id, tipo, letra, segundos, ajuda = false, ref = null) {
   const q = BYID[id];
   const ok = letra === q.resp;
   const h = hoje();
   const r = st.q[id] || (st.q[id] = { h: [] });
   r.h.push([h, letra, ok ? 1 : 0, segundos, ajuda ? 2 : 0]);
   delete r.pulou;
+  if (!ok || ajuda) delete r.motivo;   // erro novo: o motivo é escolhido de novo (o do erro antigo não vale)
   const lg = st.log[h] || (st.log[h] = { n: 0, r: 0, ok: 0 });
   if (tipo === 'nova') lg.n++; else lg.r++;
   if (ok) lg.ok++;
 
   if (ajuda) {
     // usou "ver como fazer": mesmo acertando, volta para refazer sozinho
-    r.s = 'rev'; r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]);
+    r.s = 'rev'; r.caixa = 1; r.prox = somaDias(h, intervalo(id, 1));
     if (!r.motivo) r.motivo = 'Precisei de ajuda';
   } else if (tipo === 'nova') {
     if (ok) r.s = 'dom';
-    else { r.s = 'rev'; r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]); }
+    else { r.s = 'rev'; r.caixa = 1; r.prox = somaDias(h, intervalo(id, 1)); }
   } else if (tipo === 'rev') {
     if (ok) {
       r.caixa = (r.caixa || 1) + 1;
       if (r.caixa > CAIXA_MAX) { r.s = 'rec'; delete r.prox; }
-      else r.prox = somaDias(h, INTERVALO[r.caixa]);
+      else r.prox = somaDias(h, intervalo(id, r.caixa));
     } else {
-      r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]);
+      r.caixa = 1; r.prox = somaDias(h, intervalo(id, 1));
     }
   } else if (tipo === 'simrev') {
     // revisão que apareceu num simulado antes da hora: acertar não adianta a caixa; errar volta para a 1
-    if (!ok) { r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]); }
+    if (!ok) { r.caixa = 1; r.prox = somaDias(h, intervalo(id, 1)); }
   } else if (tipo === 'pratica' && !ok) {
     // errou uma que já dominava: volta pro ciclo de revisão
-    r.s = 'rev'; r.caixa = 1; r.prox = somaDias(h, INTERVALO[1]);
+    r.s = 'rev'; r.caixa = 1; r.prox = somaDias(h, intervalo(id, 1));
   }
+  // reforço: questão nova cumpre um reforço em aberto; erro (fora do bloco de reforço) pede um
+  if (tipo === 'nova') cumprirReforco(id, ref);
+  if ((!ok || ajuda) && !ref) pedirReforco(id);
   salvar();
   return ok;
 }
-function marcarChute(id, chute) {
+function marcarChute(id, chute, ref = null) {
   const r = st.q[id];
   if (!r) return;
   const ult = r.h[r.h.length - 1];
   if (chute) {
     ult[4] = 1;
     r._antes = { s: r.s, caixa: r.caixa, prox: r.prox };
-    r.s = 'rev'; r.caixa = 1; r.prox = somaDias(hoje(), INTERVALO[1]);
+    r.s = 'rev'; r.caixa = 1; r.prox = somaDias(hoje(), intervalo(id, 1));
     r.motivo = 'Chutei';
+    if (!ref) pedirReforco(id);
   } else if (r._antes) {
     ult[4] = 0;
+    tirarReforco(id);
     Object.assign(r, r._antes);
     if (!r.prox) delete r.prox;
     delete r._antes;
@@ -552,7 +622,8 @@ function ligarTinta(id, tentativa) {
   const medir = () => { const a = area.getBoundingClientRect(), f = folha.getBoundingClientRect(); ox = f.left - a.left; oy = f.top - a.top; w = f.width || 1; };
   const ctx = cv.getContext('2d');
   const salvo = tinta[id];
-  const vale = !!salvo && (tentativa === false || (typeof tentativa === 'number' ? salvo.k === tentativa : salvo.d === hoje()));
+  // vale só o rascunho desta tentativa e de hoje (bloco largado e retomado outro dia também começa limpo)
+  const vale = !!salvo && (tentativa === false || (salvo.d === hoje() && (typeof tentativa !== 'number' || salvo.k === tentativa)));
   const tracos = vale ? salvo.t : [];
   const k = typeof tentativa === 'number' ? tentativa : salvo?.k;
   const bCaneta = $app.querySelector('[data-tinta=caneta]');
@@ -890,9 +961,21 @@ function agendaHoje(p, f) {
       id: 'novas', icone: '➕', titulo: 'Questões novas', detalhe: `${p.novasHoje} de ${p.meta}${p.novasHoje > p.meta ? ` (+${p.novasHoje - p.meta})` : ''}`,
       min: falta * 3, feito: falta === 0, frac: p.novasHoje / p.meta,
       botao: novasAberta ? { rotulo: `Continuar (${novasAberta.i + 1}/${novasAberta.itens.length})`, ir: () => retomar('novas') }
-        : { rotulo: falta <= st.cfg.bloco ? `Fazer as ${falta}` : `Bloco de ${st.cfg.bloco}`, ir: () => iniciar(Math.min(falta, st.cfg.bloco), 'novas') },
+        : { rotulo: `Fazer as ${falta}`, ir: () => iniciar(falta, 'novas') },
       extra: falta ? '' : sessaoDe('extras') ? `<button class="btn mini" type="button" data-ag="extras-cont">Continuar extras (${sessaoDe('extras').i + 1}/${sessaoDe('extras').itens.length})</button>`
         : `<button class="btn mini" type="button" data-ag="extras">+ ${st.cfg.bloco} extras</button>`,
+    });
+  }
+  // reforço dos erros: uma questão nova do mesmo tema para cada erro recente (conta como questão nova)
+  const refPend = reforcosPendentes().length, refFeitos = st.log[h]?.f || 0, refAberto = sessaoDe('reforco');
+  if (refPend + refFeitos > 0) {
+    itens.push({
+      id: 'reforco', icone: '🧩', titulo: 'Reforço dos erros',
+      detalhe: refPend ? `${refFeitos} de ${refFeitos + refPend} · questões novas dos temas que você errou (as erradas voltam depois, quando você já esqueceu a resposta)`
+        : `${refFeitos} ${refFeitos === 1 ? 'feito' : 'feitos'} hoje`,
+      min: refPend * 3, feito: refPend === 0, frac: refFeitos / (refFeitos + refPend),
+      botao: refAberto ? { rotulo: `Continuar (${refAberto.i + 1}/${refAberto.itens.length})`, ir: () => retomar('reforco') }
+        : { rotulo: `Fazer ${refPend}`, ir: () => iniciar(refPend, 'reforco') },
     });
   }
   // desafio do dia: opcional
@@ -1118,6 +1201,7 @@ function telaEstudar() {
   const rotulo = item.tipo === 'rev'
     ? `<span class="chip tag-rev">↺ Revisão · caixa ${r?.caixa || 1}</span>`
     : item.tipo === 'pratica' ? '<span class="chip">Prática</span>'
+    : item.ref ? '<span class="chip tag-foco" title="Questão nova do mesmo assunto de uma que você errou">🧩 Reforço do erro</span>'
     : item.foco ? '<span class="chip tag-foco" title="Questão de um dos seus temas mais fracos">🎯 Reforço</span>' : '<span class="chip">Nova</span>';
   // voltar para a questão anterior do bloco: só para rever — a resposta já registrada não muda
   const anterior = !s.avulsa && s.i > 0 ? '<button class="btn fantasma" id="btn-ant" title="Rever a questão anterior (a resposta não muda) · tecla ←" aria-label="Questão anterior">←</button>' : '';
@@ -1161,7 +1245,7 @@ function telaEstudar() {
     if (s.res[s.i]) return;
     clearInterval(timer);
     const seg = Math.round((Date.now() - inicio) / 1000);
-    const ok = registrar(q.id, item.tipo, letra, seg, !!item.ajuda && letra !== '?');
+    const ok = registrar(q.id, item.tipo, letra, seg, !!item.ajuda && letra !== '?', item.ref);
     s.res[s.i] = { letra, ok, seg };
     salvar();
     mostrarFeedback();
@@ -1196,17 +1280,22 @@ function telaEstudar() {
     const foiChute = reg2.h[reg2.h.length - 1][4];
     const naoSei = rr.letra === '?';
     const comAjuda = !!item.ajuda && !naoSei;
+    // anotação escrita numa tentativa anterior: fica guardada, fechada, e a caixa começa vazia
+    const notaAntiga = !!reg2.nota && reg2.notaK !== reg2.h.length - 1;
+    // quando ela volta e o que acontece até lá
+    const volta = reg2.prox ? `em ${dias(diffDias(hoje(), reg2.prox))}` : '';
+    const ate = item.ref ? '' : ' Até lá, o reforço traz uma questão nova do mesmo tema.';
     if (naoSei) {
-      estado = 'Sem problema — ela foi para o caderno de erros. Veja a resolução agora e tente sozinho amanhã.';
+      estado = `Sem problema — ela foi para o caderno de erros. Veja a resolução agora e tente sozinho quando ela voltar, ${volta}.${ate}`;
     } else if (comAjuda) {
-      estado = 'Como você viu como fazer, ela volta amanhã para você refazer sozinho.';
+      estado = `Como você viu como fazer, ela volta ${volta} para você refazer sozinho.${ate}`;
     } else if (foiChute) {
-      estado = 'Marcada como chute: vai para o caderno de erros e volta amanhã.';
+      estado = `Marcada como chute: vai para o caderno de erros e volta ${volta}.${ate}`;
     } else if (item.tipo === 'rev') {
       estado = rr.ok
-        ? (reg2.s === 'rec' ? 'Recuperada! Essa saiu do caderno de erros. 🎉' : `Subiu para a caixa ${reg2.caixa}: próxima revisão em ${dias(INTERVALO[reg2.caixa])}.`)
-        : 'Voltou para a caixa 1: revisa de novo amanhã.';
-    } else if (!rr.ok) estado = 'Foi para o caderno de erros: você revisa amanhã.';
+        ? (reg2.s === 'rec' ? 'Recuperada! Essa saiu do caderno de erros. 🎉' : `Subiu para a caixa ${reg2.caixa}: próxima revisão ${volta}.`)
+        : `Voltou para a caixa 1: revisa de novo ${volta}.${ate}`;
+    } else if (!rr.ok) estado = `Foi para o caderno de erros: volta ${volta}, quando você já não lembra a alternativa.${ate}`;
     const fb = document.getElementById('feedback');
     fb.innerHTML = `
       <div class="feedback ${rr.ok ? 'ok' : naoSei ? 'neutro' : 'erro'}">
@@ -1225,19 +1314,20 @@ function telaEstudar() {
           <input type="url" id="video" placeholder="https://www.youtube.com/watch?v=..." value="${esc(reg2.video || '')}" style="margin-top:6px">
         </details>
       </section>
-      ${!rr.ok || reg2.s === 'rev' ? `
+      ${!rr.ok || comAjuda || foiChute ? `
       <section class="card">
         <h3>${naoSei ? 'O que faltou?' : 'Por que errei?'}</h3>
+        ${notaAntiga ? `<details class="small" style="margin-bottom:8px"><summary class="muted">Sua anotação da vez passada</summary><p style="margin:6px 0 0">${esc(reg2.nota)}</p></details>` : ''}
         <div class="motivos">${MOTIVOS.map(m => `<button data-m="${esc(m)}" class="${reg2.motivo === m ? 'on' : ''}">${esc(m)}</button>`).join('')}</div>
         <label class="campo" for="nota">Anotação para a revisão (opcional)</label>
-        <textarea id="nota" placeholder="Ex.: confundi mitose com meiose; lembrar que…">${esc(reg2.nota || '')}</textarea>
+        <textarea id="nota" placeholder="Ex.: confundi mitose com meiose; lembrar que…">${notaAntiga ? '' : esc(reg2.nota || '')}</textarea>
       </section>` : ''}
     `;
     document.getElementById('acoes').innerHTML = `${anterior}<button class="btn primario" id="btn-prox">${s.i + 1 < s.itens.length ? 'Próxima →' : 'Concluir'}</button>`;
     document.getElementById('dica').innerHTML = '';
     document.getElementById('btn-prox').addEventListener('click', proxima);
-    document.getElementById('chute')?.addEventListener('change', e => { marcarChute(q.id, e.target.checked); mostrarFeedback(); });
-    document.getElementById('btn-exp').addEventListener('click', () => explicar(q, rr.letra, document.getElementById('exp')));
+    document.getElementById('chute')?.addEventListener('change', e => { marcarChute(q.id, e.target.checked, item.ref); mostrarFeedback(); });
+    document.getElementById('btn-exp').addEventListener('click', () => { rr.exp = 1; salvar(); explicar(q, rr.letra, document.getElementById('exp')); });
     document.getElementById('video').addEventListener('change', e => { reg(q.id).video = e.target.value.trim(); salvar(); });
     fb.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => {
       const r3 = reg(q.id);
@@ -1245,8 +1335,12 @@ function telaEstudar() {
       salvar();
       fb.querySelectorAll('[data-m]').forEach(x => x.classList.toggle('on', x.dataset.m === r3.motivo));
     }));
-    document.getElementById('nota')?.addEventListener('input', e => { reg(q.id).nota = e.target.value; salvar(); });
-    if (explicacoes[q.id]) document.getElementById('exp').innerHTML = `<p>${md(explicacoes[q.id])}</p>`;
+    document.getElementById('nota')?.addEventListener('input', e => {
+      const r5 = reg(q.id);
+      if (e.target.value.trim()) { r5.nota = e.target.value; r5.notaK = r5.h.length - 1; } else if (r5.notaK === r5.h.length - 1) { delete r5.nota; delete r5.notaK; }
+      salvar();
+    });
+    if (rr.exp && explicacoes[chaveExp(q.id, rr.letra)]) document.getElementById('exp').innerHTML = `<p>${md(explicacoes[chaveExp(q.id, rr.letra)])}</p>`;
   }
 
   let escolhida = null;
@@ -1277,7 +1371,7 @@ function telaEstudar() {
           <a class="btn" href="${esc(linkVideo(q))}" target="_blank" rel="noopener">▶ Resolução no YouTube</a>
           <button class="btn" id="btn-ver-resp">Ver a resposta</button>
         </div>
-        <p class="small muted" style="margin-bottom:0">Você ainda pode responder. Como pediu ajuda, ela volta amanhã para você refazer sozinho.</p>
+        <p class="small muted" style="margin-bottom:0">Você ainda pode responder. Como pediu ajuda, ela vai para o caderno de erros e volta daqui a alguns dias para você refazer sozinho.</p>
       </section>`;
     explicar(q, null, document.getElementById('dica-txt'), 'dica');
     document.getElementById('btn-ver-resp').addEventListener('click', () => {
@@ -1292,6 +1386,7 @@ function telaEstudar() {
   $app.querySelector('[data-acao=pular]')?.addEventListener('click', e => {
     e.preventDefault();
     if (item.tipo === 'nova') { (st.q[q.id] ||= { h: [] }).pulou = hoje(); }
+    if (tinta[q.id]) { delete tinta[q.id]; salvarTinta(); }
     s.itens.splice(s.i, 1);
     s.res.splice(s.i, 1);
     salvar();
@@ -1332,26 +1427,33 @@ function telaFimSessao() {
   const tipo = tipoDe(s);
   const daMeta = tipo === 'novas' && !s.extra;
   const falta = daMeta ? faltaMeta() : 0;
-  const outros = blocosAbertos().filter(x => x !== s);
+  // a próxima tarefa do cronograma de hoje que ainda falta (fora a deste bloco, que já tem o botão "mais")
+  const p = plano();
+  const prox = agendaHoje(p, diaHoje(p)).find(x => !x.opcional && !x.feito && x.botao?.ir
+    && x.id !== tipo);
+  const temMais = tipo !== 'reforco' || reforcosPendentes().length > 0;
+  const outros = blocosAbertos().filter(x => x !== s && !(prox && chaveDe(x) === prox.id));
   const voltar = s.de && s.de !== '#/estudar' ? s.de : '#/';
   $app.innerHTML = `
     <section class="card destaque" style="text-align:center">
-      <h1>${tipo === 'rev' ? 'Revisões concluídas!' : daMeta && !falta ? 'Meta de hoje batida! 🎉' : 'Bloco concluído!'}</h1>
+      <h1>${tipo === 'rev' ? 'Revisões concluídas!' : tipo === 'reforco' ? 'Reforço concluído!' : daMeta && !falta ? 'Meta de hoje batida! 🎉' : 'Bloco concluído!'}</h1>
       <p style="font-size:40px;margin:8px 0;font-weight:800">${acertos}/${total}</p>
       <p class="muted">${total ? `${pct(acertos, total)}% de acerto.` : 'Nenhuma questão respondida.'}${daMeta ? (falta ? ` Faltam ${falta} para a meta de hoje.` : ' Daqui para frente é extra — e adianta o cronograma.') : ''}</p>
       <div class="linha-btns" style="justify-content:center">
-        ${outros.length ? `<button class="btn primario" data-acao="outro">Continuar ${NOME_BLOCO[chaveDe(outros[0])]} (${outros[0].i + 1}/${outros[0].itens.length})</button>` : ''}
-        <button class="btn ${outros.length ? '' : 'primario'}" data-acao="mais">${tipo === 'rev' ? 'Mais revisões' : daMeta ? (falta ? `Fazer as ${Math.min(falta, st.cfg.bloco)} que faltam` : `Fazer ${st.cfg.bloco} extras`) : `Mais ${st.cfg.bloco}`}</button>
-        <a class="btn" href="${voltar}">Voltar</a>
+        ${prox ? `<button class="btn primario" data-acao="prox">Próxima tarefa: ${esc(prox.titulo)} →</button>` : ''}
+        ${outros.length ? `<button class="btn ${prox ? '' : 'primario'}" data-acao="outro">Continuar ${NOME_BLOCO[chaveDe(outros[0])]} (${outros[0].i + 1}/${outros[0].itens.length})</button>` : ''}
+        ${temMais ? `<button class="btn ${outros.length || prox ? '' : 'primario'}" data-acao="mais">${tipo === 'rev' ? 'Mais revisões' : tipo === 'reforco' ? 'Mais reforço' : daMeta ? (falta ? `Fazer as ${falta} que faltam` : `Fazer ${st.cfg.bloco} extras`) : `Mais ${st.cfg.bloco}`}</button>` : ''}
+        <a class="btn ${outros.length || prox || temMais ? '' : 'primario'}" href="${voltar}">Voltar</a>
       </div>
     </section>
-    ${erros.length ? `<section class="card"><h2>Erradas neste bloco</h2><p class="small muted">Elas vão para o caderno de erros e voltam a partir de amanhã.</p><ul class="lista">
+    ${erros.length ? `<section class="card"><h2>Erradas neste bloco</h2><p class="small muted">Elas vão para o caderno de erros e voltam daqui a 1–2 semanas, quando você já não lembra a alternativa que marcou.${tipo === 'reforco' ? '' : ' Até lá, o <b>reforço dos erros</b> traz uma questão nova do mesmo tema para cada uma.'}</p><ul class="lista">
       ${erros.map(it => { const q = BYID[it.id]; return `<li><div>${chipArea(q.area)} <span class="tit">${tituloQ(q)}</span></div><button class="btn" data-ver="${q.id}">Rever</button></li>`; }).join('')}
     </ul></section>` : ''}
   `;
-  $app.querySelector('[data-acao=mais]').addEventListener('click', () => (daMeta
-    ? (falta ? iniciar(Math.min(falta, st.cfg.bloco), 'novas') : iniciar(st.cfg.bloco, 'novas', null, { extra: true }))
+  $app.querySelector('[data-acao=mais]')?.addEventListener('click', () => (daMeta
+    ? (falta ? iniciar(falta, 'novas') : iniciar(st.cfg.bloco, 'novas', null, { extra: true }))
     : iniciar(st.cfg.bloco, tipo, s.alvo, { extra: !!s.extra })));
+  $app.querySelector('[data-acao=prox]')?.addEventListener('click', () => prox.botao.ir());
   $app.querySelector('[data-acao=outro]')?.addEventListener('click', () => retomar(chaveDe(outros[0])));
   $app.querySelectorAll('[data-ver]').forEach(b => b.addEventListener('click', () => { location.hash = '#/ver/' + b.dataset.ver; }));
 }
@@ -1360,6 +1462,8 @@ function telaFimSessao() {
 function verQuestao(id) {
   const q = BYID[id];
   const r = reg(id);
+  const ultR = r?.h?.[r.h.length - 1];
+  const expUlt = explicacoes[chaveExp(id, ultR?.[1])] || explicacoes[id];
   $app.innerHTML = `
     <p><a href="javascript:history.back()">← Voltar</a></p>
     <div class="q-topo"><div class="info">${chipArea(q.area)}</div></div>
@@ -1371,7 +1475,7 @@ function verQuestao(id) {
         <a class="btn" href="${esc(linkVideo(q))}" target="_blank" rel="noopener">▶ Resolução no YouTube</a>
         ${linkProva(q) ? `<a class="btn" href="${linkProva(q)}" target="_blank" rel="noopener">📄 Prova original</a>` : ''}
       </div>
-      <div id="exp" class="explicacao" style="margin-top:12px">${explicacoes[id] ? `<p>${md(explicacoes[id])}</p>` : ''}</div>
+      <div id="exp" class="explicacao" style="margin-top:12px">${expUlt ? `<p>${md(expUlt)}</p>` : ''}</div>
       ${r?.nota ? `<h3 style="margin-top:12px">Sua anotação</h3><p>${esc(r.nota)}</p>` : ''}
     </section>
   `;
@@ -1391,10 +1495,10 @@ function telaErros() {
   const tam = st.cfg.bloco;
   let msg;
   if (venc.length) msg = `Você tem <b>${venc.length} ${venc.length === 1 ? 'questão' : 'questões'}</b> para refazer hoje.`;
-  else if (todas.length && !adiantar.length) msg = 'Nada vence hoje, e as que você respondeu hoje só voltam a partir de amanhã — com a memória fresca, refazer não conta.';
+  else if (todas.length && !adiantar.length) msg = 'Nada vence hoje, e as que você errou há pouco ainda estão esperando — com a alternativa fresca na memória, refazer não conta. Enquanto isso, faça o reforço dos erros.';
   else if (todas.length) {
     const d = diffDias(h, reg(todas[0].id).prox);
-    msg = `Nada vence hoje. A próxima revisão é ${d === 1 ? 'amanhã' : `em ${dias(d)}`} — se quiser, adiante (as respondidas hoje ficam de fora).`;
+    msg = `Nada vence hoje. A próxima revisão é ${d === 1 ? 'amanhã' : `em ${dias(d)}`} — se quiser, adiante (só as que já passaram da metade da espera).`;
   } else msg = 'Seu caderno de erros está vazio. Quando você errar ou pedir ajuda numa questão, ela aparece aqui.';
   let semana = '<div class="semana">';
   for (let k = 0; k < 7; k++) {
@@ -1993,13 +2097,14 @@ function telaLogica() {
     <section class="card">
       <h2>2. Errou? Volta até você dominar</h2>
       <p>Errou, ou acertou no chute → a questão entra no <b>caderno de erros</b> e reaparece em intervalos crescentes:</p>
-      <p><b>amanhã → 3 dias → 7 dias → 21 dias</b>. Acertou as 4 revisões seguidas → <b>recuperada</b>. Errou numa revisão → volta pro começo (amanhã).</p>
-      <p class="small muted">Por que não refazer na hora? Logo depois de ver a resposta você acerta por memória, não por entendimento. Esperar um dia testa se você aprendeu de verdade.</p>
+      <p>Linguagens e Humanas: <b>14 → 21 → 30 → 45 dias</b>. Natureza e Matemática: <b>7 → 14 → 30 → 45 dias</b>. Acertou as 4 revisões seguidas → <b>recuperada</b>. Errou numa revisão → volta pro começo. Perto da prova os intervalos encolhem para tudo caber antes dela.</p>
+      <p class="small muted">Por que tanto tempo? Logo depois de ver a resposta você acerta por memória da alternativa, não por entendimento — e texto longo (português, humanas) gruda mais. Esperar testa se você aprendeu de verdade.</p>
+      <p><b>🧩 Reforço dos erros:</b> enquanto a errada espera, cada erro pede <b>uma questão nova do mesmo tema</b> (sem tema sobrando, da matéria; depois, da área). Treina o assunto sem decorar a questão e ainda adianta as questões novas. Aparece no cronograma depois das questões novas; uma questão nova do mesmo tema feita em qualquer bloco também cumpre o reforço.</p>
     </section>
     <section class="card">
       <h2>3. Quando você erra</h2>
       <ul>
-        <li>Travou numa questão? <b>🤷 Não sei — ver resolução</b> mostra a resposta, a explicação e o vídeo. Ela entra no caderno de erros, para você tentar sozinho amanhã.</li>
+        <li>Travou numa questão? <b>🤷 Não sei — ver resolução</b> mostra a resposta, a explicação e o vídeo. Ela entra no caderno de erros, para você tentar sozinho quando ela voltar.</li>
         <li>O app mostra a <b>alternativa certa</b> na hora.</li>
         <li><b>💡 Por que é X?</b> — um resumo curto do raciocínio (gerado pela IA que você escolher em Ajustes: Claude, Gemini ou ChatGPT).</li>
         <li><b>▶ Resolução no YouTube</b> — já abre a busca da questão exata; se achar um vídeo bom, salve o link e o botão passa a abrir direto nele.</li>
@@ -2344,8 +2449,10 @@ async function rodarIA(el, { sistema, pedido, imgsDe, aoTerminar, tentarDeNovo, 
   }
 }
 
+// a explicação depende da letra marcada ("por que a B está errada"): guardada por questão + letra
+function chaveExp(id, marcada) { return `${id}:${marcada && marcada !== '?' && marcada !== BYID[id]?.resp ? marcada : 'ok'}`; }
 async function explicar(q, marcada, el, modo = 'porque') {
-  const chave = modo === 'dica' ? `${q.id}:dica` : q.id;
+  const chave = modo === 'dica' ? `${q.id}:dica` : chaveExp(q.id, marcada);
   if (explicacoes[chave]) { el.innerHTML = `<p>${md(explicacoes[chave])}</p>`; return; }
   if (!chaveIA()) {
     el.innerHTML = `<p class="aviso">Para ver a explicação escrita, escolha a IA e coloque sua chave de API em <a href="#/ajustes">Ajustes</a> (Claude, Gemini ou ChatGPT). Enquanto isso, o vídeo do YouTube resolve!</p>`;

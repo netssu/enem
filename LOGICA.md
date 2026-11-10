@@ -20,13 +20,17 @@ Estratégia: **fazer todas as questões do ENEM (provas azuis 2010–2025) uma v
     │ errou, ou acertou no chute
     ▼
   REVISÃO caixa 1 ──acertou──► caixa 2 ──► caixa 3 ──► caixa 4 ──acertou──► RECUPERADA
-      ▲  (volta em 1 dia)     (3 dias)    (7 dias)    (21 dias)
+      ▲  LC/CH: 14 dias        21 dias     30 dias     45 dias
+      │  CN/MT:  7 dias        14 dias     30 dias     45 dias
       └────────────── errou em qualquer caixa ─────────────┘
 ```
 
-- **Por que não refazer na hora?** Logo depois de ver a resposta você acerta por memória. Esperar um dia testa se aprendeu de verdade.
+- **Por que tanto tempo?** Logo depois de ver a resposta você acerta por memória da alternativa, não por entendimento — e texto longo (Linguagens, Humanas) gruda mais, por isso espera mais. Perto da prova os intervalos encolhem para as revisões que faltam caberem antes dela.
+- Estados antigos (intervalos de 1, 3, 7 e 21 dias) são reespaçados uma vez: a próxima revisão passa a contar da última resposta com os intervalos novos (só empurra para depois).
+- **Adiantar revisões** só oferece as que já passaram da metade da espera.
+- **🧩 Reforço dos erros**: enquanto a errada espera, cada erro (errou, chute, "não sei", ajuda) pede **uma questão nova do mesmo tema** — sem tema sobrando, da mesma matéria; depois, da mesma área. É uma tarefa do cronograma, depois das questões novas, e conta como questão nova (adianta o banco). Uma questão nova do mesmo tema feita em qualquer bloco também cumpre o reforço. Erro numa questão de reforço não pede outro reforço (não vira bola de neve), e o reforço caduca depois de 14 dias.
 - **Chute conta como erro**: depois de acertar, dá pra marcar “foi chute” e a questão vai para a revisão.
-- **"Não sei — ver resolução"**: antes de responder, dá para pedir a resolução direto (resposta, explicação e vídeo). Conta como erro: a questão vai para a caixa 1 e volta amanhã para você tentar sozinho.
+- **"Não sei — ver resolução"**: antes de responder, dá para pedir a resolução direto (resposta, explicação e vídeo). Conta como erro: a questão vai para a caixa 1 e volta depois do intervalo para você tentar sozinho.
 - Se uma questão “dominada” for refeita e errada, ela volta para a caixa 1.
 
 ## Explicações com IA: andamento e erros
@@ -41,10 +45,10 @@ Estratégia: **fazer todas as questões do ENEM (provas azuis 2010–2025) uma v
 
 - Cada bloco tem **um tipo só**, e cada tipo guarda o seu andamento: **novas** (só questões nunca feitas — o "Questões novas" do cronograma), **revisões** (só o caderno de erros: as vencidas; sem vencidas, adianta as próximas), **misto** (novas + revisões vencidas — o bloco livre da aba Questões), **tema** e **área** (treinos). Começar um guarda os outros onde pararam; começar outro do mesmo tipo substitui o guardado.
 - O botão de cada lugar só continua o bloco do seu tipo: "Questões novas" no cronograma nunca abre um bloco com revisões.
-- O bloco de **questões novas** do cronograma nunca passa da meta de hoje: ele encolhe sozinho para o que falta (faltando 1, sobra 1). Batida a meta, o fim do bloco e o cronograma oferecem **extras**, que são um bloco separado, sem limite.
+- O bloco de **questões novas** do cronograma é a meta de hoje inteira, de uma vez (meta de 13 → bloco de 13, não 10 + 3), e nunca passa dela: ele encolhe sozinho para o que falta (faltando 1, sobra 1). Batida a meta, o fim do bloco e o cronograma oferecem **extras**, que são um bloco separado, sem limite.
 - **Conferência antes de cada questão:** sai do bloco a questão nova que já foi respondida em outro lugar, a revisão que já foi feita hoje ou que saiu do caderno, e qualquer repetição. Vale também para blocos guardados há dias.
 - Questão respondida hoje não volta hoje: nem nas revisões adiantadas, nem nos treinos, nem nos simulados de questões já feitas.
-- "Sair" e "Voltar" levam para onde o bloco começou. No fim de um bloco, o app oferece continuar outro que esteja guardado.
+- "Sair" e "Voltar" levam para onde o bloco começou. No fim de um bloco, o botão principal é a **próxima tarefa** do cronograma de hoje que ainda falta (ex.: revisões do caderno de erros, redação, simulado); os extras e o "continuar outro bloco guardado" ficam ao lado.
 
 ## Voltar para a questão anterior
 
@@ -127,7 +131,8 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 - **No celular/tablet**, o dedo rola a página; para escrever com o dedo, toque em **✏️ Escrever**. Caneta (stylus) escreve direto.
 - **Correção da linha**: cada ponto novo é puxado para perto do anterior (estabilizador), tremidas menores que 2 px são ignoradas e o traço é desenhado com curvas suaves. A linha é grossa (≈ 0,65% da largura da questão, mínimo 4 px).
 - Dá para rabiscar também na margem em volta da questão. **↶** desfaz o último traço e **🗑** apaga tudo. Os rabiscos acompanham o A−/A+.
-- Ficam salvos por questão (as 80 mais recentes) e aparecem de novo em “Rever”. Numa tentativa nova, em outro dia, a folha começa limpa — o rascunho antigo entregaria a resposta.
+- Ficam salvos por questão (as 80 mais recentes) e aparecem de novo em “Rever”. Numa tentativa nova a folha começa limpa — o rascunho antigo entregaria a resposta. Vale só o rascunho da tentativa atual e de hoje: questão pulada, ou bloco largado e retomado outro dia, também volta com a folha limpa.
+- **Cada tentativa começa do zero**: quando a questão volta, a explicação da IA da vez passada não abre sozinha (ela é guardada por letra marcada — "por que a B está errada" não aparece se agora você marcou C), o motivo do erro antigo não vem marcado, e a anotação antiga fica fechada em "Sua anotação da vez passada", com a caixa vazia. "Por que errei?" só aparece quando esta resposta foi erro, chute ou com ajuda.
 
 ## Metas por dia da semana
 

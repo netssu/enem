@@ -78,7 +78,10 @@ function carregar() {
   return padrao();
 }
 let st = carregar();
-function salvar() { localStorage.setItem(KEY, JSON.stringify(st)); }
+function salvar() {
+  localStorage.setItem(KEY, JSON.stringify(st));
+  if (st.ranking?.on) setTimeout(() => rankingAgendar(), 0);   // manda o placar da semana (com espera, sem pressa)
+}
 // revisões marcadas com os intervalos antigos (1, 3, 7, 21 dias): reespaça a partir da última resposta (só empurra para depois)
 if (!st.intervalos2) {
   for (const [id, r] of Object.entries(st.q)) {
@@ -3480,6 +3483,193 @@ function seqDesafio() {
   return n;
 }
 
+// ---------------------------------------------------------------- ranking (opcional, Firebase)
+// Placar da semana (questões respondidas, novas + revisões, de segunda a domingo), geral e por liga.
+// Login anônimo: sem e-mail, só um apelido. O SDK do Firebase só é baixado por quem entra no ranking.
+// Config: Console do Firebase › Configurações do projeto › Seus apps › Web. Não é segredo — quem protege
+// os dados são as regras em tools/firestore.rules. Enquanto for null, o ranking fica escondido.
+const FIREBASE = {
+  apiKey: 'AIzaSyBwz63CUTUiWkh9gdZd4u9HcRUuRf7ptnM',
+  authDomain: 'enem-2483a.firebaseapp.com',
+  projectId: 'enem-2483a',
+  storageBucket: 'enem-2483a.firebasestorage.app',
+  messagingSenderId: '499670109099',
+  appId: '1:499670109099:web:cc652f67856b7a954160ee',
+};
+const FB_VER = '10.14.1';
+const RK_ESPERA = 15000;   // no máximo uma escrita a cada 15 s (as regras recusam menos de 10 s)
+let fbP = null, rkEnviado = '', rkUltimo = 0, rkTimer = null, rkAba = null;
+
+function segundaDaSemana(d = hoje()) { return somaDias(d, -((diaSemana(d) + 6) % 7)); }
+function placarLocal() {
+  const semana = segundaDaSemana(), dom = somaDias(semana, 6);
+  let n = 0, ok = 0, total = 0;
+  for (const [d, lg] of Object.entries(st.log)) {
+    const x = (lg.n || 0) + (lg.r || 0);
+    total += x;
+    if (d >= semana && d <= dom) { n += x; ok += lg.ok || 0; }
+  }
+  return { semana, n, ok: Math.min(ok, n), total };
+}
+function conectarFirebase() {
+  fbP ||= (async () => {
+    const base = `https://www.gstatic.com/firebasejs/${FB_VER}/`;
+    const [app, auth, fs] = await Promise.all(['firebase-app', 'firebase-auth', 'firebase-firestore'].map(x => import(base + x + '.js')));
+    const a = app.initializeApp(FIREBASE);
+    const au = auth.getAuth(a);
+    await au.authStateReady();
+    if (!au.currentUser) await auth.signInAnonymously(au);
+    return { db: fs.getFirestore(a), uid: au.currentUser.uid, fs };
+  })().catch(e => { fbP = null; throw e; });
+  return fbP;
+}
+function docMeu(fb, semana) { return fb.fs.doc(fb.db, 'semanas', semana, 'jogadores', fb.uid); }
+async function rankingEnviar() {
+  if (!FIREBASE || !st.ranking?.on) return;
+  const p = placarLocal(), r = st.ranking;
+  const chave = JSON.stringify([p, r.apelido, r.liga]);
+  if (chave === rkEnviado) return;
+  if (Date.now() - rkUltimo < RK_ESPERA) return rankingAgendar();
+  const fb = await conectarFirebase();
+  rkUltimo = Date.now();
+  await fb.fs.setDoc(docMeu(fb, p.semana), { apelido: r.apelido, liga: r.liga || '', n: p.n, ok: p.ok, total: p.total, t: fb.fs.serverTimestamp() });
+  rkEnviado = chave;
+}
+function rankingAgendar() {
+  if (!FIREBASE || !st.ranking?.on || rkTimer) return;
+  rkTimer = setTimeout(() => { rkTimer = null; rankingEnviar().catch(() => { /* sem rede: tenta no próximo salvar */ }); },
+    Math.max(3000, RK_ESPERA - (Date.now() - rkUltimo)));
+}
+async function rankingLer(liga) {
+  const fb = await conectarFirebase(), { fs, db, uid } = fb;
+  const col = fs.collection(db, 'semanas', segundaDaSemana(), 'jogadores');
+  // liga: filtra por igualdade e ordena aqui (as ligas são pequenas); geral: os 50 primeiros. Nenhuma das duas pede índice composto.
+  const q = liga ? fs.query(col, fs.where('liga', '==', liga), fs.limit(300)) : fs.query(col, fs.orderBy('n', 'desc'), fs.limit(50));
+  const lista = (await fs.getDocs(q)).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.n - a.n);
+  lista.forEach((x, i) => { x.pos = i && lista[i - 1].n === x.n ? lista[i - 1].pos : i + 1; });
+  let fora = null;   // sua posição quando você não está entre os 50 do geral
+  if (!liga && !lista.some(x => x.id === uid)) {
+    const meu = placarLocal().n;
+    fora = { pos: (await fs.getCountFromServer(fs.query(col, fs.where('n', '>', meu)))).data().count + 1, n: meu };
+  }
+  return { lista, uid, fora };
+}
+function novaLiga() {
+  const L = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // sem 0/O e 1/I, para ditar o código sem confusão
+  return Array.from(crypto.getRandomValues(new Uint8Array(6)), b => L[b % L.length]).join('');
+}
+function limparLiga(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
+function linkLiga(liga) { return `${location.origin}${location.pathname}#/ranking/${liga}`; }
+
+function telaRanking(arg) {
+  const r = st.ranking || {};
+  const convite = limparLiga(arg);
+  if (!FIREBASE) {
+    $app.innerHTML = `<h1>Ranking</h1><section class="card"><p class="muted">O ranking ainda não foi configurado neste site.</p></section>`;
+    return;
+  }
+  const semana = segundaDaSemana();
+  if (!r.on) {
+    $app.innerHTML = `
+      <h1>Ranking</h1>
+      <section class="card destaque">
+        <h2>🏆 Ranking da semana</h2>
+        <p>Quem respondeu mais questões de segunda a domingo (novas e revisões). Zera toda segunda, então dá para ganhar mesmo começando agora.</p>
+        <p class="small muted">Aparece só o seu apelido, quantas questões você fez na semana e o acerto. Não use seu nome completo. Dá para sair quando quiser.</p>
+        <label class="campo" for="rk-apelido">Apelido</label>
+        <input type="text" id="rk-apelido" maxlength="20" placeholder="ex.: estudante42" value="${esc(r.apelido || '')}" autocomplete="off">
+        <label class="campo" for="rk-liga">Código da liga (opcional)</label>
+        <input type="text" id="rk-liga" maxlength="12" placeholder="para competir só com seus amigos" value="${esc(convite || r.liga || '')}" autocomplete="off" style="text-transform:uppercase">
+        <p class="small muted">Sem liga você aparece só no ranking geral. Para criar uma, toque em “Criar liga” e mande o convite para a turma.</p>
+        <p class="small" id="rk-erro" style="color:var(--erro)" hidden></p>
+        <div class="linha-btns">
+          <button class="btn primario" id="rk-entrar">Entrar no ranking</button>
+          <button class="btn" id="rk-criar">Criar liga</button>
+        </div>
+      </section>`;
+    const g = id => document.getElementById(id);
+    g('rk-criar').addEventListener('click', () => { g('rk-liga').value = novaLiga(); });
+    g('rk-entrar').addEventListener('click', async () => {
+      const apelido = g('rk-apelido').value.trim().replace(/\s+/g, ' ');
+      const liga = limparLiga(g('rk-liga').value);
+      const erro = msg => { g('rk-erro').textContent = msg; g('rk-erro').hidden = false; };
+      if (apelido.length < 2) return erro('O apelido precisa de pelo menos 2 letras.');
+      const b = g('rk-entrar'); b.disabled = true; b.textContent = 'Entrando…';
+      st.ranking = { on: true, apelido, liga };
+      rkEnviado = '';
+      salvar();
+      try { await rankingEnviar(); rkAba = liga ? 'liga' : 'geral'; if (location.hash === '#/ranking') rota(); else location.hash = '#/ranking'; }
+      catch (e) { st.ranking.on = false; salvar(); b.disabled = false; b.textContent = 'Entrar no ranking'; erro(e.code === 'auth/network-request-failed' || !navigator.onLine ? 'Sem conexão. Confira a internet e tente de novo.' : `Não deu para entrar (${e.code || e.message}).`); }
+    });
+    return;
+  }
+  if (!rkAba || (rkAba === 'liga' && !r.liga)) rkAba = r.liga ? 'liga' : 'geral';
+  const p = placarLocal();
+  $app.innerHTML = `
+    <h1>Ranking</h1>
+    ${convite && convite !== r.liga ? `<section class="card destaque"><h2>Convite para a liga ${esc(convite)}</h2>
+      <p class="small muted">${r.liga ? `Você está na liga ${esc(r.liga)}. Dá para estar em uma liga por vez.` : 'Você continua no ranking geral também.'}</p>
+      <div class="linha-btns"><button class="btn primario" id="rk-aceitar">Entrar na liga ${esc(convite)}</button><a class="btn" href="#/ranking">Agora não</a></div></section>` : ''}
+    <section class="card">
+      <div class="titulo-linha"><h2>Semana de ${fmtCurto(semana)} a ${fmtCurto(somaDias(semana, 6))}</h2><span class="small muted">zera na segunda</span></div>
+      <div class="grid2">
+        <div class="stat"><b>${p.n}</b><span>questões suas nesta semana</span></div>
+        <div class="stat"><b id="rk-pos">…</b><span id="rk-pos-txt">sua posição</span></div>
+      </div>
+      <div class="linha-btns">
+        ${r.liga ? `<button class="btn mini ${rkAba === 'liga' ? 'primario' : ''}" data-aba="liga">Liga ${esc(r.liga)}</button>` : ''}
+        <button class="btn mini ${rkAba === 'geral' ? 'primario' : ''}" data-aba="geral">Geral</button>
+      </div>
+      <ul class="lista rk-lista" id="rk-lista"><li class="muted">Carregando…</li></ul>
+    </section>
+    <section class="card">
+      <h2>Você no ranking</h2>
+      <p class="small muted">Apelido <b>${esc(r.apelido)}</b>${r.liga ? ` · liga <b>${esc(r.liga)}</b>` : ' · sem liga'}. O placar é enviado sozinho enquanto você estuda.</p>
+      <div class="linha-btns">
+        ${r.liga ? '<button class="btn" id="rk-convite">Copiar convite da liga</button>' : ''}
+        <button class="btn" id="rk-mudar">Mudar apelido ou liga</button>
+        <button class="btn perigo" id="rk-sair">Sair do ranking</button>
+      </div>
+      <p class="small muted" id="rk-copiado" hidden>Convite copiado — mande para a turma.</p>
+    </section>`;
+  const g = id => document.getElementById(id);
+  g('rk-aceitar')?.addEventListener('click', () => { r.liga = convite; rkAba = 'liga'; salvar(); location.hash = '#/ranking'; });
+  document.querySelectorAll('[data-aba]').forEach(b => b.addEventListener('click', () => { rkAba = b.dataset.aba; telaRanking(arg); }));
+  g('rk-convite')?.addEventListener('click', async () => {
+    const txt = `Entra na minha liga do ENEM Azul: ${linkLiga(r.liga)}`;
+    try { await navigator.clipboard.writeText(txt); g('rk-copiado').hidden = false; } catch { prompt('Copie o convite:', txt); }
+  });
+  g('rk-mudar').addEventListener('click', () => { r.on = false; salvar(); telaRanking(arg); });
+  g('rk-sair').addEventListener('click', async () => {
+    if (!confirm('Sair do ranking? Seu placar desta semana é apagado do ranking (o seu progresso no app continua).')) return;
+    try { const fb = await conectarFirebase(); await fb.fs.deleteDoc(docMeu(fb, semana)); } catch { /* sem rede: o placar some na segunda */ }
+    st.ranking = { on: false, apelido: r.apelido, liga: '' };
+    rkEnviado = '';
+    salvar();
+    telaRanking();
+  });
+  (async () => {
+    try { await rankingEnviar(); } catch { /* lê mesmo assim */ }
+    const { lista, uid, fora } = await rankingLer(rkAba === 'liga' ? r.liga : '');
+    const ul = g('rk-lista');
+    if (!ul || !ul.isConnected) return;
+    const medalha = n => ['🥇', '🥈', '🥉'][n - 1] || `${n}º`;
+    ul.innerHTML = lista.length ? lista.map(x => `<li class="${x.id === uid ? 'rk-eu' : ''}">
+        <div class="rk-nome"><span class="rk-pos">${medalha(x.pos)}</span><span class="tit">${esc(x.apelido)}${x.id === uid ? ' (você)' : ''}</span></div>
+        <div class="small muted" style="text-align:right"><b class="rk-n">${x.n}</b> ${x.n === 1 ? 'questão' : 'questões'}${x.n ? ` · ${pct(x.ok, x.n)}%` : ''}</div></li>`).join('')
+      : '<li class="muted">Ninguém fez questões nesta semana ainda. Seja o primeiro!</li>';
+    const eu = lista.find(x => x.id === uid);
+    const pos = eu ? eu.pos : fora?.pos;
+    g('rk-pos').textContent = pos ? `${pos}º` : '—';
+    g('rk-pos-txt').textContent = rkAba === 'liga' ? `na liga, de ${lista.length}` : 'no ranking geral';
+  })().catch(e => {
+    const ul = g('rk-lista');
+    if (!ul?.isConnected) return;
+    ul.innerHTML = `<li class="muted">Não deu para carregar o ranking${navigator.onLine ? ` (${esc(e.code || e.message)})` : ': sem conexão'}.</li>`;
+    g('rk-pos').textContent = '—';
+  });
+}
+
 // ---------------------------------------------------------------- rotas
 function rota() {
   limpar.forEach(f => f());
@@ -3502,8 +3692,10 @@ function rota() {
   else if (pagina === 'logica') telaLogica();
   else if (pagina === 'redacao') telaRedacao(arg);
   else if (pagina === 'questoes') telaQuestoes();
+  else if (pagina === 'ranking') telaRanking(arg);
   else if (pagina === 'ver' && BYID[arg]) verQuestao(arg);
   else telaInicio();
 }
+document.querySelector('[data-nav="ranking"]')?.toggleAttribute('hidden', !FIREBASE);
 window.addEventListener('hashchange', () => { window.scrollTo(0, 0); rota(); });
 rota();

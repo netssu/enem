@@ -1025,3 +1025,4 @@ html[data-tema="escuro"] .fim-bloco h1 { color: var(--ouro); }
 .fq-base { background: var(--azul-cl); color: var(--azul); }
 .fq-ritmo { background: var(--roxo-cl); color: var(--roxo); }
 .fq-reta { background: var(--rosa-cl); color: var(--rosa); }
+pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; border-radius: 14px; background: var(--soft); font: 600 13px/1.4 ui-monospace, monospace; }

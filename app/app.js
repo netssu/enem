@@ -1,6 +1,34 @@
 // ENEM Azul — app de estudo "fazer todas as questões e voltar nas que errei".
 // Tudo roda no navegador; o progresso fica no localStorage.
 
+// rede de segurança: se algo quebrar (ao abrir o app ou uma tela), mostra o erro e oferece uma cópia do progresso,
+// em vez de deixar a tela em branco. Não usa nada declarado mais abaixo (pode rodar antes de o app terminar de carregar).
+function mostrarFalha(err) {
+  console.error(err);
+  const el = document.getElementById('app');
+  if (!el) return;
+  const msg = String(err?.stack || err?.message || err).split('\n').slice(0, 4).join('\n').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  document.body.classList.remove('sem-conta', 'foco');
+  el.innerHTML = `<section class="card" style="border-color:var(--verm)">
+    <h2>Algo deu errado ao abrir esta tela</h2>
+    <p class="small">Seu progresso continua salvo neste navegador. Se recarregar não resolver, mande esta mensagem para quem cuida do app:</p>
+    <pre class="falha">${msg}</pre>
+    <div class="linha-btns"><button class="btn primario" type="button" id="falha-recarregar">Recarregar</button>
+      <button class="btn" type="button" id="falha-backup">Baixar cópia do progresso</button><a class="btn" href="#/">Ir para o início</a></div>
+  </section>`;
+  document.getElementById('falha-recarregar').onclick = () => location.reload();
+  document.getElementById('falha-backup').onclick = () => {
+    let estado = {};
+    try { estado = JSON.parse(localStorage.getItem('enem.v1')) || {}; } catch { /* ilegível: vai vazio */ }
+    if (estado.cfg) for (const k of ['apiKey', 'chaveGoogle', 'chaveOpenai']) estado.cfg[k] = '';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ versao: 1, exportado: new Date().toISOString(), estado })], { type: 'application/json' }));
+    a.download = 'enem-progresso.json';
+    a.click();
+  };
+}
+window.addEventListener('error', e => { if (!e.filename || e.filename.includes('app.js')) mostrarFalha(e.error || e.message); });
+
 const QUESTOES = window.QUESTOES || [];
 const BYID = Object.fromEntries(QUESTOES.map(q => [q.id, q]));
 const AREAS = {
@@ -2789,7 +2817,11 @@ function salvarRed() {
 }
 // contador permanente de redações corrigidas e palavras (o histórico guarda só as últimas 40 correções)
 function contaPalavras(t) { return (String(t || '').match(/\S+/g) || []).length; }
-if (!red.cont) red.cont = { n: red.hist.length, palavras: red.hist.reduce((s, x) => s + contaPalavras(x.texto), 0) };
+try {
+  if (!Array.isArray(red.hist)) red.hist = [];
+  red.hist = red.hist.filter(x => x && typeof x === 'object');   // registros vazios de versões antigas
+  if (!red.cont) red.cont = { n: red.hist.length, palavras: red.hist.reduce((s, x) => s + contaPalavras(x.texto), 0) };
+} catch { red.cont = { n: 0, palavras: 0 }; }
 let fotosRed = [];   // fotos da folha (só na memória): { data, mime, url }
 // níveis das marcações: 1 (melhor) a 5 (pior); 0 = leitura duvidosa da foto
 const NIVEIS_RED = {
@@ -4365,19 +4397,21 @@ function rota() {
   document.body.classList.toggle('foco', pagina === 'estudar' || emProva);   // questão e prova: sem lateral nem trilho
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('ativo',
     a.dataset.nav === ({ pontos: 'erros' }[pagina] || pagina || 'inicio')));
-  if (pagina === 'estudar') telaEstudar();
-  else if (pagina === 'simulado') telaSimulado();
-  else if (pagina === 'pontos') telaPontos();
-  else if (pagina === 'erros') telaErros();
-  else if (pagina === 'progresso') telaProgresso();
-  else if (pagina === 'ajustes') telaAjustes();
-  else if (pagina === 'logica') telaLogica();
-  else if (pagina === 'redacao') telaRedacao(arg);
-  else if (pagina === 'questoes') telaQuestoes();
-  else if (pagina === 'ranking') telaRanking(arg);
-  else if (pagina === 'ver' && BYID[arg]) verQuestao(arg);
-  else telaInicio();
-  renderTrilho(pagina);
+  try {
+    if (pagina === 'estudar') telaEstudar();
+    else if (pagina === 'simulado') telaSimulado();
+    else if (pagina === 'pontos') telaPontos();
+    else if (pagina === 'erros') telaErros();
+    else if (pagina === 'progresso') telaProgresso();
+    else if (pagina === 'ajustes') telaAjustes();
+    else if (pagina === 'logica') telaLogica();
+    else if (pagina === 'redacao') telaRedacao(arg);
+    else if (pagina === 'questoes') telaQuestoes();
+    else if (pagina === 'ranking') telaRanking(arg);
+    else if (pagina === 'ver' && BYID[arg]) verQuestao(arg);
+    else telaInicio();
+  } catch (e) { mostrarFalha(e); return; }
+  try { renderTrilho(pagina); } catch (e) { console.error(e); document.getElementById('trilho').innerHTML = ''; }   // o trilho é extra: se falhar, some
 }
 document.querySelector('[data-nav="ranking"]')?.toggleAttribute('hidden', !FIREBASE);
 // tema claro/escuro: escolhido no <head> (salvo ou o do sistema); o botão da lateral troca e guarda

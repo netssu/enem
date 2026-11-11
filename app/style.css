@@ -1030,3 +1030,23 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 .btn.mini.borracha.on { background: var(--rosa); border-color: var(--rosa); color: #fff; box-shadow: 0 3px 0 var(--rosa-esc); }
 .questao-img.borracha-on > canvas.tinta { cursor: cell; }
 .borracha-on.questao-img { outline-color: var(--rosa); }
+
+/* ---------- trilha de focos (cronograma) ---------- */
+.tag-trilha { background: var(--azul-cl); color: var(--azul); }
+.tr-lista { list-style: none; padding: 0; margin: 12px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.tr-area { --a-cor: var(--azul); border: 2px solid var(--line); border-radius: 18px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tr-area.LC { --a-cor: var(--lc); } .tr-area.CH { --a-cor: var(--ch); } .tr-area.CN { --a-cor: var(--cn); } .tr-area.MT { --a-cor: var(--mt); }
+.tr-topo { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tr-tema { display: flex; flex-direction: column; margin-top: 4px; }
+.tr-tema b { font-family: var(--titulo); font-size: 18px; line-height: 1.2; }
+.tr-area .barra.fina { display: block; flex: none; width: 100%; margin: 4px 0 2px; }
+.tr-area .barra.fina > i { background: var(--a-cor); }
+.tr-acoes { display: flex; gap: 6px; margin-top: auto; padding-top: 6px; }
+.tr-mais { margin-top: 12px; }
+.tr-mais > summary { cursor: pointer; color: var(--azul); font-weight: 700; }
+.tr-toda { border-top: 1px solid var(--line); padding: 6px 0; }
+.tr-toda summary { cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.tr-toda ol { margin: 4px 0 4px; padding-left: 22px; font-size: 14px; }
+.tr-toda li.feita { color: var(--muted); }
+.tr-toda li.atual { font-weight: 800; color: var(--ink); }
+.tr-toda li.vazia { color: var(--muted); text-decoration: line-through; }

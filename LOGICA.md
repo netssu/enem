@@ -91,6 +91,19 @@ Ordem das questões novas (Ajustes):
 
 Atalhos: **⚡ 5 rapidinhas** (fila de ônibus) e **↺ Só revisões**.
 
+### 📚 Trilha de focos (padrão, com a ordem intercalada)
+
+Cada área tem **um tema em foco por vez** (ex.: Natureza › Biologia › Citologia e bioquímica; Matemática › Geometria plana). As áreas continuam intercaladas, mas dentro de cada área:
+
+- **2 de cada 3** questões novas vêm do tema em foco (provas de todos os anos, das mais recentes às mais antigas); a 3ª vem de um **tema que já passou** pelo foco — o visto há mais tempo primeiro. Sem tema passado ainda, vem da ordem normal.
+- A **etapa de foco** dura até você fazer **metade** das questões novas que faltavam do tema (mínimo 3). As questões de tema passado nunca usam os **últimos 30%** de um tema: isso fica guardado para as revisões.
+- **Revisões de temas passados:** depois de cada 3 temas, uma etapa de revisão do tema mais antigo ainda não revisto (metade do que sobrou dele). No fim do 1º giro, um **giro só de revisões**, tema por tema, com tudo o que sobrou — então todo tema continua aparecendo até o fim das questões novas. Numa etapa de revisão, o "Adiantar revisões" traz primeiro as do caderno de erros daquele tema.
+- **Ordem:** cada matéria numa ordem de estudo (ex.: Biologia: citologia → genética → evolução → fisiologia → saúde → botânica/zoologia → ecologia → biotecnologia), e as matérias da área se alternam espalhadas por igual (Biologia → Física → Química → …).
+- A etapa conta as questões novas do tema feitas em **qualquer lugar** (blocos, treinos, simulados) e avança sozinha; não existe atraso. Simulação com o banco todo: etapas de 1 a 3 semanas, o 1º giro dura ~75% do tempo até o fim das novas.
+- Com a trilha ligada, o 🎯 reforço dos pontos fracos pega ~1 em cada 6 questões novas (em vez de 1 em 3), para o foco continuar sendo a maioria.
+- No **Cronograma**, o card **“📚 Foco do momento”** mostra o tema de cada área, quanto falta, a estimativa em dias, o próximo tema, a trilha completa e os botões **Treinar** (bloco só do tema) e **Pular**. Nas questões aparecem as etiquetas **📚 Foco** e **↩ Tema passado**.
+- Desliga em Ajustes › Questões. Na ordem “prova por prova” a trilha não vale. Na junção com a nuvem, vale a etapa mais adiantada de cada área.
+
 ## 6. Onde ficam os dados
 
 Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera um `.json` de backup, que também serve para levar o progresso para outro aparelho.

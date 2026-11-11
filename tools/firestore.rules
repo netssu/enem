@@ -1,0 +1,32 @@
+// Regras do Firestore para o ranking do ENEM Azul.
+// Cole no Console do Firebase › Firestore Database › Regras › Publicar.
+//
+// Dados: semanas/{segunda-feira AAAA-MM-DD}/jogadores/{uid do login anônimo}
+//   { apelido, liga, n: questões na semana, ok: acertos, total: questões desde sempre, t: hora do servidor }
+// Qualquer um lê; cada um só escreve e apaga o próprio placar, com limites de plausibilidade.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /semanas/{semana}/jogadores/{uid} {
+      allow read: if true;
+
+      function valido() {
+        let d = request.resource.data;
+        return request.auth != null && request.auth.uid == uid
+          && semana.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && d.keys().hasOnly(['apelido', 'liga', 'n', 'ok', 'total', 't'])
+          && d.apelido is string && d.apelido.size() >= 2 && d.apelido.size() <= 20
+          && d.liga is string && d.liga.matches('^[A-Z0-9]{0,12}$')
+          && d.n is int && d.n >= 0 && d.n <= 1500          // ~200 por dia, a semana inteira
+          && d.ok is int && d.ok >= 0 && d.ok <= d.n
+          && d.total is int && d.total >= d.n && d.total <= 200000
+          && d.t == request.time;
+      }
+
+      allow create: if valido();
+      // no máximo uma escrita a cada 10 s por pessoa
+      allow update: if valido() && request.time > resource.data.t + duration.value(10, 's');
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}

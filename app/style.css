@@ -599,3 +599,13 @@ mark.m.sel, mark.m:focus-visible { outline: 2px solid var(--text); outline-offse
 .q-areas .btn { flex-direction: column; gap: 4px; padding: 12px; }
 .ag-texto > .chip { align-self: flex-start; }
 .ag-texto > .barra.fina { flex: none; width: 100%; max-width: 280px; height: 5px; margin-top: 6px; }
+
+/* ranking */
+.rk-lista { margin-top: 8px; }
+.rk-lista li { padding: 10px 8px; }
+.rk-nome { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.rk-nome .tit { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rk-pos { min-width: 2.2em; text-align: center; font-weight: 700; color: var(--muted); }
+.rk-n { color: var(--text); font-size: 16px; }
+.rk-lista li.rk-eu { background: var(--azul-claro); border-radius: 10px; }
+.rk-lista li.rk-eu .tit { color: var(--azul); }

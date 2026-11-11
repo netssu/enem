@@ -10,6 +10,7 @@ App de estudo com uma estratégia simples: **fazer todas as questões das provas
 - Aba **Redação**: escreve numa folha de 30 linhas (com correção em tempo real opcional) ou manda a foto da folha e a IA corrige no padrão do ENEM — trechos grifados do verde ao vermelho com explicação e reescrita, nota estimada (cenário pessimista e otimista), aulas para buscar no YouTube e dicas de português. O critério está em `app/data/redacao.js` (matriz do INEP + lições das redações nota 1000). O **Desafio dos anos** pede 900+ no tema de cada ENEM desde 2011, com redações reais nota 980–1000 de referência, e o cronograma marca as redações necessárias para fechar tudo em 1 ano; a tela Hoje traz um desafio de estudo por dia.
 - **Cronograma** (tela inicial): a agenda do dia com tempo e botão para cada tarefa (revisões, novas, redação, simulado, desafio), quanto falta para um bom desempenho por área, a semana e as fases até a prova, com simulados curtos semanais focados nas matérias mais difíceis. A aba **Questões** é para responder livremente, sem plano.
 - Meta diária calculada a partir da data da prova; o progresso fica salvo no navegador (com backup em JSON).
+- **Ranking da semana** (opcional): quem respondeu mais questões de segunda a domingo, no geral e em ligas de amigos por código. Só apelido, login anônimo pelo Firebase. Como configurar: [LOGICA.md](LOGICA.md#ranking-da-semana-opcional-firebase).
 
 A lógica completa está em [LOGICA.md](LOGICA.md).
 

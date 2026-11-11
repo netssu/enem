@@ -205,3 +205,24 @@ Na ordem: simulado (se for o dia), redação (se for o dia), revisões vencidas,
 ### Quanto falta para um bom desempenho
 
 Por área, o acerto de primeira (sem chute e sem "ver como fazer") dos últimos 90 dias — ou de tudo, se houver menos de 30 questões nesse período — comparado com o alvo (70% por padrão, muda em Ajustes). Só aparece com pelo menos 15 questões na área. Redação: a média das últimas 3 correções (média dos dois cenários), com alvo 900.
+
+## Ranking da semana (opcional, Firebase)
+
+Aba **Ranking** (só aparece quando o Firebase está configurado em `FIREBASE`, no `app.js`).
+
+- **Pontuação:** questões respondidas de segunda a domingo (novas + revisões, as mesmas do registro do dia). Zera toda segunda, para quem começou agora ter chance. Mostra também o acerto, mas não ordena por ele (incentivaria pular questões).
+- **Geral e ligas:** o geral mostra os 50 primeiros (e a sua posição, se você estiver fora). Uma **liga** é um código de 6 letras/números (“Criar liga”); o convite é um link `#/ranking/CODIGO` que já preenche o código. Uma liga por vez.
+- **Privacidade:** entrar é opcional; aparece só o apelido (2–20 caracteres), as questões da semana e o acerto. Login **anônimo** do Firebase — sem e-mail nem senha. “Sair do ranking” apaga o placar da semana.
+- **Envio:** depois de cada resposta salva, o placar vai sozinho, no máximo uma vez a cada 15 s e só se mudou. O SDK do Firebase só é baixado por quem entrou no ranking.
+- **Dados:** `semanas/{segunda AAAA-MM-DD}/jogadores/{uid}` → `{ apelido, liga, n, ok, total, t }`. Nenhuma consulta precisa de índice composto.
+- **Regras** (`tools/firestore.rules`): qualquer um lê; cada um só grava o próprio placar, com limites (até 1.500 questões por semana, acertos ≤ questões, uma escrita a cada 10 s). Dá para trapacear editando o navegador — tudo roda no cliente —, por isso o foco em ligas entre amigos. Apelido ofensivo: apague o documento no console do Firestore.
+- **Outro aparelho:** o login anônimo é por navegador. Quem usa no celular e no computador aparece duas vezes na semana (cada um com o que fez naquele aparelho).
+
+### Configurar (uma vez)
+
+1. https://console.firebase.google.com › **Adicionar projeto** (pode desligar o Google Analytics).
+2. **Authentication › Começar › Método de login › Anônimo › Ativar.** Em **Configurações › Domínios autorizados**, adicione `netssu.github.io`.
+3. **Firestore Database › Criar banco de dados** (modo de produção, região `southamerica-east1`). Em **Regras**, cole `tools/firestore.rules` e publique.
+4. **Configurações do projeto › Seus apps › Web (`</>`)**, registre o app e copie o objeto `firebaseConfig` para `const FIREBASE = {...}` no `app.js`.
+
+O plano gratuito (Spark) aguenta 50 mil leituras e 20 mil escritas por dia.

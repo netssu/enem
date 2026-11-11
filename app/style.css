@@ -1026,3 +1026,7 @@ html[data-tema="escuro"] .fim-bloco h1 { color: var(--ouro); }
 .fq-ritmo { background: var(--roxo-cl); color: var(--roxo); }
 .fq-reta { background: var(--rosa-cl); color: var(--rosa); }
 pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; border-radius: 14px; background: var(--soft); font: 600 13px/1.4 ui-monospace, monospace; }
+/* borracha da caneta: ligada, apaga o traço inteiro em que o ponteiro passar */
+.btn.mini.borracha.on { background: var(--rosa); border-color: var(--rosa); color: #fff; box-shadow: 0 3px 0 var(--rosa-esc); }
+.questao-img.borracha-on > canvas.tinta { cursor: cell; }
+.borracha-on.questao-img { outline-color: var(--rosa); }

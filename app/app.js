@@ -654,7 +654,8 @@ function ligarTinta(id, tentativa) {
   if (!cv || !folha) return;
   // posição da imagem dentro da área de desenho: (ox, oy) e largura w
   let ox = 0, oy = 0, w = 1;
-  const medir = () => { const a = area.getBoundingClientRect(), f = folha.getBoundingClientRect(); ox = f.left - a.left; oy = f.top - a.top; w = f.width || 1; };
+  // medido a partir da própria tela de desenho (não da caixa em volta, que tem borda): o traço sai onde o ponteiro está
+  const medir = () => { const a = cv.getBoundingClientRect(), f = folha.getBoundingClientRect(); ox = f.left - a.left; oy = f.top - a.top; w = f.width || 1; };
   const ctx = cv.getContext('2d');
   const salvo = tinta[id];
   // vale só o rascunho desta tentativa e de hoje (bloco largado e retomado outro dia também começa limpo)
@@ -664,6 +665,8 @@ function ligarTinta(id, tentativa) {
   const bCaneta = $app.querySelector('[data-tinta=caneta]');
   const bDesfazer = $app.querySelector('[data-tinta=desfazer]');
   const bLimpar = $app.querySelector('[data-tinta=limpar]');
+  const bBorracha = $app.querySelector('[data-tinta=borracha]');
+  let borracha = false;
   const estilo = () => { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = COR_TINTA; ctx.lineWidth = Math.max(4, w * 0.0065); };
   const X = x => ox + x * w, Y = y => oy + y * w;
   const meio = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -695,39 +698,62 @@ function ligarTinta(id, tentativa) {
   const desenhar = () => {
     medir();
     const dpr = window.devicePixelRatio || 1;
-    cv.width = Math.round(area.clientWidth * dpr); cv.height = Math.round(area.clientHeight * dpr);
+    cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientHeight * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     estilo();
     tracos.forEach(traco);
   };
+  // a tela de desenho mudou de tamanho (ex.: a área de rascunho cresce no 1º traço)? redesenha na hora,
+  // senão o desenho antigo fica esticado e os traços parecem "descer" até o próximo redesenho
+  const conferirTamanho = () => {
+    const dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(cv.clientWidth * dpr) || cv.height !== Math.round(cv.clientHeight * dpr)) desenhar();
+  };
   const botoes = () => {
-    $app.classList.toggle('caneta-on', canetaLigada);
+    if (!tracos.length) borracha = false;
+    $app.classList.toggle('caneta-on', canetaLigada || borracha);
+    area.classList.toggle('borracha-on', borracha);
     bCaneta?.classList.toggle('on', canetaLigada);
     bCaneta?.setAttribute('aria-pressed', canetaLigada);
+    bBorracha?.classList.toggle('on', borracha);
+    bBorracha?.setAttribute('aria-pressed', borracha);
     if (bDesfazer) bDesfazer.hidden = !tracos.length;
     if (bLimpar) bLimpar.hidden = !tracos.length;
+    if (bBorracha) bBorracha.hidden = !tracos.length;
     area.classList.toggle('tem-tinta', tracos.length > 0);
+    conferirTamanho();
   };
   const guardar = () => { if (tracos.length) tinta[id] = { d: hoje(), t: tracos, ...(k !== undefined ? { k } : {}) }; else delete tinta[id]; salvarTinta(); botoes(); };
   const ro = new ResizeObserver(desenhar);
   ro.observe(folha);
-  ro.observe(area);
+  ro.observe(cv, { box: 'border-box' });   // a tela de desenho em si: pega também o crescimento da área de rascunho
   aoSair(() => ro.disconnect());
-  let atual = null, liso = null;
+  let atual = null, liso = null, apagando = false, apagou = false;
   const pos = e => { const f = folha.getBoundingClientRect(); return [(e.clientX - f.left) / f.width, (e.clientY - f.top) / f.width]; };
   const arred = p => [+p[0].toFixed(4), +p[1].toFixed(4)];
+  // borracha: apaga o traço inteiro que passar a menos de ~12px do ponteiro
+  const apagarEm = p => {
+    const raio = 12 / w;
+    let mudou = false;
+    for (let i = tracos.length - 1; i >= 0; i--) {
+      if (tracos[i].some(q => Math.hypot(q[0] - p[0], q[1] - p[1]) < raio)) { tracos.splice(i, 1); mudou = true; }
+    }
+    if (mudou) { apagou = true; desenhar(); }
+  };
   cv.addEventListener('pointerdown', e => {
-    if (e.pointerType === 'touch' && !canetaLigada) return;   // dedo: rola a página
+    if (e.pointerType === 'touch' && !canetaLigada && !borracha) return;   // dedo: rola a página
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     try { cv.setPointerCapture(e.pointerId); } catch { /* sem captura: segue desenhando */ }
     medir(); estilo();
+    if (borracha) { apagando = true; apagou = false; apagarEm(pos(e)); return; }
     liso = pos(e);
     atual = [arred(liso)];
     tracos.push(atual);
     trecho(atual, 0);
   });
   cv.addEventListener('pointermove', e => {
+    if (apagando) { apagarEm(pos(e)); return; }
     if (!atual) return;
     const agrupados = e.getCoalescedEvents?.();
     for (const ev of (agrupados && agrupados.length ? agrupados : [e])) {
@@ -740,6 +766,7 @@ function ligarTinta(id, tentativa) {
     }
   });
   const fim = e => {
+    if (apagando) { apagando = false; if (apagou) guardar(); return; }
     if (!atual) return;
     if (e?.type === 'pointerup') {   // termina onde o ponteiro soltou
       const p = arred(pos(e)), u = atual[atual.length - 1];
@@ -753,7 +780,8 @@ function ligarTinta(id, tentativa) {
   cv.addEventListener('pointercancel', fim);
   // tablet: caneta (stylus) escreve sem rolar a página; o dedo continua rolando
   cv.addEventListener('touchstart', e => { if ([...e.touches].some(t => t.touchType === 'stylus')) e.preventDefault(); }, { passive: false });
-  bCaneta?.addEventListener('click', () => { canetaLigada = !canetaLigada; botoes(); });
+  bCaneta?.addEventListener('click', () => { canetaLigada = !canetaLigada; if (canetaLigada) borracha = false; botoes(); });
+  bBorracha?.addEventListener('click', () => { borracha = !borracha; botoes(); });
   const desfazer = () => { tracos.pop(); desenhar(); guardar(); };
   bDesfazer?.addEventListener('click', desfazer);
   bLimpar?.addEventListener('click', () => { tracos.length = 0; desenhar(); guardar(); });
@@ -769,6 +797,7 @@ function controlesTamanho() {
   return `<span class="tamanho">
     <button class="btn mini" data-tinta="desfazer" title="Desfazer o último traço" hidden>↶</button>
     <button class="btn mini" data-tinta="limpar" title="Apagar os rabiscos" hidden>🗑</button>
+    <button class="btn mini borracha" data-tinta="borracha" aria-pressed="false" title="Borracha: passe por cima de um traço para apagá-lo" hidden>🧽 Borracha</button>
     <button class="btn mini caneta" data-tinta="caneta" aria-pressed="false" title="Escrever com o dedo na folha">✏️ Escrever</button>
     <button class="btn mini" data-esc="-1" title="Diminuir">A−</button><button class="btn mini" data-esc="1" title="Aumentar">A+</button></span>`;
 }

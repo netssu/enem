@@ -130,7 +130,8 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 - **No computador**, é só clicar e arrastar na folha para escrever em azul — não precisa ligar nada. Embaixo da questão há sempre uma área de **rascunho**. **Ctrl+Z** desfaz.
 - **No celular/tablet**, o dedo rola a página; para escrever com o dedo, toque em **✏️ Escrever**. Caneta (stylus) escreve direto.
 - **Correção da linha**: cada ponto novo é puxado para perto do anterior (estabilizador), tremidas menores que 2 px são ignoradas e o traço é desenhado com curvas suaves. A linha é grossa (≈ 0,65% da largura da questão, mínimo 4 px).
-- Dá para rabiscar também na margem em volta da questão. **↶** desfaz o último traço e **🗑** apaga tudo. Os rabiscos acompanham o A−/A+.
+- Dá para rabiscar também na margem em volta da questão. **↶** desfaz o último traço, **🧽 Borracha** (ligada, fica rosa) apaga o traço inteiro em que você passar por cima — com mouse, caneta ou dedo — e **🗑** apaga tudo. Os rabiscos acompanham o A−/A+.
+- A posição do traço é medida na própria tela de desenho, e quando a área de rascunho cresce (no primeiro traço) o desenho é refeito na hora — antes ele ficava esticado e o traço parecia "descer" até o próximo redesenho.
 - Ficam salvos por questão (as 80 mais recentes) e aparecem de novo em “Rever”. Numa tentativa nova a folha começa limpa — o rascunho antigo entregaria a resposta. Vale só o rascunho da tentativa atual e de hoje: questão pulada, ou bloco largado e retomado outro dia, também volta com a folha limpa.
 - **Cada tentativa começa do zero**: quando a questão volta, a explicação da IA da vez passada não abre sozinha (ela é guardada por letra marcada — "por que a B está errada" não aparece se agora você marcou C), o motivo do erro antigo não vem marcado, e a anotação antiga fica fechada em "Sua anotação da vez passada", com a caixa vazia. "Por que errei?" só aparece quando esta resposta foi erro, chute ou com ajuda.
 

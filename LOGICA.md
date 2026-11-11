@@ -212,17 +212,65 @@ Aba **Ranking** (só aparece quando o Firebase está configurado em `FIREBASE`, 
 
 - **Pontuação:** questões respondidas de segunda a domingo (novas + revisões, as mesmas do registro do dia). Zera toda segunda, para quem começou agora ter chance. Mostra também o acerto, mas não ordena por ele (incentivaria pular questões).
 - **Geral e ligas:** o geral mostra os 50 primeiros (e a sua posição, se você estiver fora). Uma **liga** é um código de 6 letras/números (“Criar liga”); o convite é um link `#/ranking/CODIGO` que já preenche o código. Uma liga por vez.
-- **Privacidade:** entrar é opcional; aparece só o apelido (2–20 caracteres), as questões da semana e o acerto. Login **anônimo** do Firebase — sem e-mail nem senha. “Sair do ranking” apaga o placar da semana.
-- **Envio:** depois de cada resposta salva, o placar vai sozinho, no máximo uma vez a cada 15 s e só se mudou. O SDK do Firebase só é baixado por quem entrou no ranking.
+- **Privacidade:** entrar no ranking é opcional; aparece só o apelido (2–20 caracteres), as questões da semana e o acerto — nunca o nome ou o e-mail da conta Google. “Sair do ranking” apaga o placar da semana.
+- **Envio:** depois de cada resposta salva, o placar vai sozinho, no máximo uma vez a cada 15 s e só se mudou.
 - **Dados:** `semanas/{segunda AAAA-MM-DD}/jogadores/{uid}` → `{ apelido, liga, n, ok, total, t }`. Nenhuma consulta precisa de índice composto.
-- **Regras** (`tools/firestore.rules`): qualquer um lê; cada um só grava o próprio placar, com limites (até 1.500 questões por semana, acertos ≤ questões, uma escrita a cada 10 s). Dá para trapacear editando o navegador — tudo roda no cliente —, por isso o foco em ligas entre amigos. Apelido ofensivo: apague o documento no console do Firestore.
-- **Outro aparelho:** o login anônimo é por navegador. Quem usa no celular e no computador aparece duas vezes na semana (cada um com o que fez naquele aparelho).
+- **Regras** (`tools/firestore.rules`): qualquer um lê; cada um só grava o próprio placar (com conta Google), com limites (até 1.500 questões por semana, acertos ≤ questões, uma escrita a cada 10 s). Dá para trapacear editando o navegador — tudo roda no cliente —, por isso o foco em ligas entre amigos. Apelido ofensivo: apague o documento no console do Firestore.
+- **Outro aparelho:** o placar é da conta Google, então a pessoa aparece uma vez só, em qualquer aparelho.
 
 ### Configurar (uma vez)
 
 1. https://console.firebase.google.com › **Adicionar projeto** (pode desligar o Google Analytics).
-2. **Authentication › Começar › Método de login › Anônimo › Ativar.** Em **Configurações › Domínios autorizados**, adicione `netssu.github.io`.
+2. **Authentication › Começar › Método de login › Google › Ativar** (e-mail de suporte: o seu). Em **Configurações › Domínios autorizados**, adicione `netssu.github.io`.
 3. **Firestore Database › Criar banco de dados** (modo de produção, região `southamerica-east1`). Em **Regras**, cole `tools/firestore.rules` e publique.
 4. **Configurações do projeto › Seus apps › Web (`</>`)**, registre o app e copie o objeto `firebaseConfig` para `const FIREBASE = {...}` no `app.js`.
 
 O plano gratuito (Spark) aguenta 50 mil leituras e 20 mil escritas por dia.
+
+## Números grandes (Progresso)
+
+O primeiro card do **Progresso** mostra tudo o que já foi feito, contado desde a primeira questão (também o que foi feito antes do card existir), para dar a sensação de quanto você já andou:
+
+- **Número principal:** questões respondidas desde o começo — toda tentativa conta (novas, revisões, simulados), então não tem teto como "questões feitas de 2.870". Ao abrir a tela ele sobe do 0 até o total (sem animação para quem pede menos movimento no sistema).
+- **Próximo marco:** barra e "faltam N para M" (10, 50, 100, 250, 500, 750, 1.000, 1.500, 2.000… 50.000; depois de 10 em 10 mil). No fim de um bloco que cruzou um marco de 50 ou mais aparece "🎉 Você passou de M questões respondidas!".
+- **Apoio:** tempo resolvendo questões (soma dos segundos de cada tentativa, no máximo 10 min por questão — app esquecido aberto não conta), acertos, quantos ENEMs inteiros isso dá (÷ 180) e palavras escritas nas redações corrigidas (ou o número de redações, contando "Já fiz no papel"). O contador de redações e palavras é guardado à parte, porque o histórico de correções só mantém as 40 mais recentes.
+- **Antes → agora** (a partir de 40 questões novas): acerto de primeira e tempo médio das suas primeiras questões novas contra as mais recentes (até 100 de cada lado, sem sobrepor). Verde quando melhorou.
+
+## Conta Google: login de todo mundo e progresso na nuvem
+
+Com o Firebase configurado, **todo mundo entra com o Google** antes de usar o app: sem conta, o site mostra só a tela "Entrar com Google" (sem o menu). Quem já tinha progresso no navegador entra e esse progresso vai para a conta na primeira sincronização. Depois do primeiro login o app abre direto, inclusive sem internet (o login fica guardado no navegador). A conta fica em **Ajustes › Conta Google**.
+
+- **O que vai para a nuvem:** questões (com o histórico de tentativas), registro dos dias, cronograma, ajustes, simulados, desafios, ranking e redações corrigidas. **Fica só no aparelho:** as chaves de API das IAs, os rabiscos, o rascunho da redação e o cache das explicações. Nome e e-mail do Google nunca vão para o ranking.
+- **Quando sincroniza:** ao abrir o app; 20 s depois de cada mudança; ao sair do app (trocar de aba, bloquear o celular); ao voltar depois de 1 min; e no botão "Sincronizar agora".
+- **Dados:** `usuarios/{uid}` (estado, compactado com gzip, com um número de versão `rev`) e `usuarios/{uid}/partes/redacoes`. Só a própria pessoa lê e grava, e só com login do Google (`tools/firestore.rules`).
+- **Junção** (quando a nuvem mudou desde a última sincronização deste aparelho — cada envio é uma transação que confere o `rev`):
+  - questões: união; o histórico de tentativas é a soma dos dois lados (sem repetir) e o estado (caixa, próxima revisão, motivo) vem de quem respondeu por último;
+  - dias: o maior número de cada dia; simulados, desafios cumpridos e redações: união;
+  - ajustes, bloco em andamento e o resto: do lado que mudou por último — menos na **primeira** sincronização de um aparelho, quando vêm de quem tem mais questões feitas (um aparelho novo não troca a data da prova da conta pelos padrões);
+  - no meio de um bloco ou simulado, o bloco deste aparelho não é trocado.
+  - **Progresso de convidado:** quem já usava o app sem conta vê na tela de entrada quantas questões tem no navegador e pode baixar uma cópia (.json) antes de entrar. No primeiro login esse progresso é juntado com a conta (se a conta estiver vazia, vira o progresso da conta), e antes disso o app guarda uma cópia local em `enem.antes-da-conta`.
+- **Importar** e **Apagar tudo**, com a conta conectada, **substituem** o que está na nuvem (não juntam — senão o apagado voltaria).
+- **Ranking:** usa a conta Google (quem tinha entrado no ranking com o login anônimo antigo tem esse login convertido na conta, com o mesmo placar). A pessoa aparece uma vez só, em qualquer aparelho.
+- **Sair da conta:** primeiro salva tudo na nuvem (sem internet, não deixa sair — nada se perde); depois **limpa o progresso deste aparelho**, inclusive as chaves de API e os rabiscos, porque o aparelho pode ser compartilhado (computador da escola) e a próxima pessoa que entrar não deve herdar o progresso de outra.
+- **Sessão perdida** (dados do site apagados em parte): volta para a tela de entrada; o progresso do aparelho é juntado com a conta ao entrar de novo.
+- **Apagar minha conta:** apaga o progresso e as redações da nuvem, o placar da semana no ranking, o usuário do login (quando o login é recente) e o progresso deste aparelho.
+
+Para ligar: Console do Firebase › Authentication › Método de login › **Google** › Ativar (e-mail de suporte: o seu) › Salvar; o **Anônimo** pode ficar desligado. E publicar as regras de `tools/firestore.rules`.
+
+## Visual (Remake do App ENEM)
+
+O visual segue o design "Remake do App ENEM" (claude.ai/design): fontes Baloo 2 (títulos) e Nunito (texto), cards com borda de 2 px e cantos de 24 px, botões "gordinhos" com sombra embaixo que some ao apertar, e uma cor por tipo de coisa (novas azul, revisões laranja, reforço roxo, redação verde, simulado rosa, desafio dourado; áreas: Linguagens azul, Humanas laranja, Natureza verde, Matemática roxo).
+
+- **Tema claro e escuro:** botão na lateral; na primeira visita segue o tema do sistema. Fica salvo no navegador (`enem.tema`).
+- **Lateral** com o Cronograma em destaque; no celular vira uma barra embaixo. Na tela da questão e no fim do bloco ela some (modo foco).
+- **Trilho da direita** (telas a partir de 1240 px): 🔥 dias seguidos estudando, ⚡ XP, 🏆 posição no ranking, uma frase do dia, o desafio do dia e o top 5 da sua liga.
+- **Questão:** a barra das alternativas fica verde quando acerta e vermelha quando erra, com o XP ganho.
+- **Cronograma:** "Hoje" em cartões (um por tarefa, na cor dela); a semana em três linhas (questões novas, revisões, redação e simulado) com a troca para o **mês** inteiro (metas batidas, faltas, folgas, redações e simulados marcados; a escolha fica guardada no navegador); e **Até o ENEM**: um quadrado por semana, da semana da primeira questão até a da prova (verde = semana estudada, azul = a atual, depois nas cores das fases Base, Ritmo e Reta).
+- **Caderno de erros:** as 4 caixas e as recuperadas em colunas, com a altura acompanhando a quantidade.
+- **Ranking:** pódio com os 3 primeiros (2º, 1º, 3º) e a lista a partir do 4º, cada pessoa com a inicial numa bolinha colorida.
+- **Fim de bloco:** confete (quando o acerto é de 60% ou mais, ou a meta foi batida) e as caixas de XP, acerto e tempo do bloco.
+- **Entrada:** duas colunas (apresentação | "Continuar com Google"). O design também tinha e-mail/senha e "usar sem conta"; ficaram de fora porque todo mundo entra com o Google.
+
+### XP
+
+Contado desde a primeira questão (inclusive o que foi feito antes do XP existir): **10 por acerto, 2 por erro** (o esforço conta), **50 por desafio do dia cumprido, 100 por redação corrigida e 30 por simulado**. Não muda nada no plano; é só para ver o número subir.

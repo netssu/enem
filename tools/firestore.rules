@@ -1,18 +1,25 @@
-// Regras do Firestore para o ranking do ENEM Azul.
+// Regras do Firestore do ENEM Azul (ranking + progresso na nuvem).
 // Cole no Console do Firebase › Firestore Database › Regras › Publicar.
-//
-// Dados: semanas/{segunda-feira AAAA-MM-DD}/jogadores/{uid do login anônimo}
-//   { apelido, liga, n: questões na semana, ok: acertos, total: questões desde sempre, t: hora do servidor }
-// Qualquer um lê; cada um só escreve e apaga o próprio placar, com limites de plausibilidade.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // todo mundo entra com o Google (o login anônimo não grava nada)
+    function google(uid) {
+      return request.auth != null && request.auth.uid == uid
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+
+    // ---- ranking da semana
+    // semanas/{segunda-feira AAAA-MM-DD}/jogadores/{uid}
+    //   { apelido, liga, n: questões na semana, ok: acertos, total: questões desde sempre, t: hora do servidor }
+    // Qualquer um lê; cada um só escreve e apaga o próprio placar (com conta Google), com limites de plausibilidade.
     match /semanas/{semana}/jogadores/{uid} {
       allow read: if true;
 
       function valido() {
         let d = request.resource.data;
-        return request.auth != null && request.auth.uid == uid
+        return google(uid)
           && semana.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
           && d.keys().hasOnly(['apelido', 'liga', 'n', 'ok', 'total', 't'])
           && d.apelido is string && d.apelido.size() >= 2 && d.apelido.size() <= 20
@@ -26,7 +33,27 @@ service cloud.firestore {
       allow create: if valido();
       // no máximo uma escrita a cada 10 s por pessoa
       allow update: if valido() && request.time > resource.data.t + duration.value(10, 's');
-      allow delete: if request.auth != null && request.auth.uid == uid;
+      allow delete: if google(uid);
+    }
+
+    // ---- progresso na nuvem
+    // usuarios/{uid}                 → { rev, z, dados (gzip), t }
+    // usuarios/{uid}/partes/redacoes → { z, dados (gzip), t }
+    function pacote(d) {
+      return d.z in [0, 1] && (d.dados is bytes || d.dados is string) && d.t == request.time;
+    }
+    match /usuarios/{uid} {
+      allow read, delete: if google(uid);
+      allow create, update: if google(uid)
+        && request.resource.data.keys().hasOnly(['rev', 'z', 'dados', 't'])
+        && request.resource.data.rev is int && pacote(request.resource.data);
+
+      match /partes/{parte} {
+        allow read, delete: if google(uid);
+        allow create, update: if google(uid) && parte == 'redacoes'
+          && request.resource.data.keys().hasOnly(['z', 'dados', 't'])
+          && pacote(request.resource.data);
+      }
     }
   }
 }

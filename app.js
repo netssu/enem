@@ -80,6 +80,7 @@ function padrao() {
       ordem: 'intercalado',
       areas: [...ORDEM_AREAS],
       foco: true,   // reforçar pontos fracos nos blocos
+      trilha: true,   // trilha de focos: um tema em foco por área (ver ordemTrilha)
       redacao: true,   // dias de redação no cronograma
       apiKey: '',          // chave da Anthropic (Claude)
       ia: 'anthropic',     // qual IA explica: anthropic | google | openai
@@ -186,8 +187,13 @@ function filaNovas() {
     return cands.sort((a, b) => pulou(a) - pulou(b) || b.ano - a.ano || a.num - b.num);
   }
   // intercalado: uma de cada área por vez, das provas mais recentes para as mais antigas
-  const porArea = areas.map(a => cands.filter(q => q.area === a)
-    .sort((x, y) => pulou(x) - pulou(y) || y.ano - x.ano || x.num - y.num));
+  // (com a trilha de focos: dentro de cada área, o tema em foco e os temas que já passaram — ver ordemTrilha)
+  const ct = trilhaLigada() ? contagemTemas() : null;
+  marcaTrilha = {};
+  const porArea = areas.map(a => {
+    const l = cands.filter(q => q.area === a).sort((x, y) => pulou(x) - pulou(y) || y.ano - x.ano || x.num - y.num);
+    return ct ? ordemTrilha(a, l, ct) : l;
+  });
   const feitasTotal = Object.keys(st.q).length;
   const fila = [];
   let i = feitasTotal % areas.length;
@@ -230,6 +236,138 @@ function reforcosPendentes() {
     if (q) out.push({ e, q });
   }
   return out;
+}
+
+// ---------------------------------------------------------------- trilha de focos
+// Cada área tem UM tema em foco por vez (ex.: Natureza › Biologia › Citologia e bioquímica): 2 de cada 3 questões novas
+// da área vêm dele, e a outra de um tema que já passou pelo foco (o que você viu há mais tempo primeiro). A etapa de
+// foco usa só METADE das questões novas que faltam do tema, e as questões "de tema passado" nunca comem os últimos 30%
+// de um tema: isso fica guardado para as etapas de revisão — uma depois de cada 3 temas (o tema mais antigo ainda não
+// revisto) e, no fim do 1º giro, um giro só de revisões com o que sobrou de cada tema. Assim nenhum tema se esgota no
+// primeiro mês e todos continuam aparecendo até o fim das questões novas.
+// O andamento conta questões novas do tema feitas em qualquer lugar (blocos, treinos, simulados); não existe atraso.
+const ORDEM_TEMAS = {   // por matéria, numa ordem de estudo (base → aplicação); as matérias da área se intercalam
+  LC: [['POR.int', 'POR.gen', 'POR.fun', 'POR.var', 'POR.gra', 'POR.fig', 'POR.arg', 'POR.tec'], ['LIT.pro', 'LIT.poe', 'LIT.esc'],
+    ['ART.vis', 'ART.mus', 'ART.cen', 'ART.pat'], ['EDF.cor'], ['LE.ing', 'LE.esp']],
+  CH: [['HIS.ant', 'HIS.mod', 'HIS.col', 'HIS.con', 'HIS.imp', 'HIS.rep', 'HIS.afr'], ['GEO.car', 'GEO.nat', 'GEO.cli', 'GEO.agr', 'GEO.urb', 'GEO.eco', 'GEO.glo'],
+    ['FIL.ant', 'FIL.mod', 'FIL.con', 'FIL.eti'], ['SOC.teo', 'SOC.cul', 'SOC.tra', 'SOC.cid']],
+  CN: [['BIO.cel', 'BIO.gen', 'BIO.evo', 'BIO.fis', 'BIO.sau', 'BIO.ser', 'BIO.eco', 'BIO.tec'], ['QUI.ger', 'QUI.est', 'QUI.fqu', 'QUI.ele', 'QUI.org', 'QUI.amb'],
+    ['FIS.mec', 'FIS.ene', 'FIS.hid', 'FIS.ter', 'FIS.opt', 'FIS.ond', 'FIS.ele', 'FIS.mod']],
+  MT: [['ARI.ope', 'ARI.raz', 'ARI.por', 'ARI.med'], ['ALG.equ', 'ALG.fun', 'ALG.exp', 'ALG.seq'], ['GEM.pla', 'GEM.esp', 'GEM.tri', 'GEM.ana', 'GEM.vis'],
+    ['EST.est', 'EST.gra', 'EST.pro', 'EST.com']],
+};
+const TRILHA = {
+  foco: 0.5,      // fração das novas que faltam do tema usada na etapa de foco
+  revisao: 0.5,   // idem nas revisões do 1º giro (nos giros só de revisão: tudo o que sobrou)
+  cada: 3,        // uma etapa de revisão depois de cada 3 temas
+  reserva: 0.3,   // parte de cada tema que as questões "de tema passado" não tocam
+  min: 3,         // menor etapa (em questões)
+  padrao: [1, 1, 0],   // 1 = foco, 0 = tema passado
+};
+function trilhaLigada() { return st.cfg.trilha !== false && st.cfg.ordem !== 'prova' && Object.keys(TEMAS.q).length > 0; }
+// por tema: questões válidas, novas já feitas e a data da última resposta
+function contagemTemas() {
+  const total = {}, feitas = {}, ult = {};
+  for (const q of POOL()) {
+    const c = temaDe(q.id);
+    if (!c) continue;
+    total[c] = (total[c] || 0) + 1;
+    const h = reg(q.id)?.h;
+    if (!h?.length) continue;
+    feitas[c] = (feitas[c] || 0) + 1;
+    const d = h[h.length - 1][0];
+    if (!ult[c] || d > ult[c]) ult[c] = d;
+  }
+  return { total, feitas, ult, resta: c => (total[c] || 0) - (feitas[c] || 0) };
+}
+// temas da área na ordem da trilha: cada matéria na sua ordem, as matérias espalhadas por igual ao longo do giro
+function temasTrilha(a, ct) {
+  const out = [];
+  ORDEM_TEMAS[a].forEach((l, m) => { const v = l.filter(c => ct.total[c] > 0); v.forEach((c, i) => out.push({ c, p: (i + 0.5) / v.length, m })); });
+  return out.sort((x, y) => x.p - y.p || x.m - y.m).map(x => x.c);
+}
+const seqCache = {};
+function etapasTrilha(a, ct = contagemTemas()) {
+  const chave = `${a}|${st.cfg.lingua}`;
+  if (seqCache[chave]) return seqCache[chave];
+  const temas = temasTrilha(a, ct), seq = [], revistos = new Set();
+  temas.forEach((c, i) => {
+    seq.push({ c, tipo: 'foco', giro: 1 });
+    if ((i + 1) % TRILHA.cada) return;
+    const r = temas.slice(0, i).find(x => !revistos.has(x));   // o tema mais antigo ainda não revisto
+    if (r) { revistos.add(r); seq.push({ c: r, tipo: 'revisao', giro: 1 }); }
+  });
+  for (let g = 2; g <= 4; g++) temas.forEach(c => seq.push({ c, tipo: 'revisao', giro: g }));
+  return (seqCache[chave] = seq);
+}
+// a etapa atual da área (avança sozinha quando a cota é cumprida ou o tema acaba); null = trilha concluída
+function etapaAtual(a, ct = contagemTemas(), pular = false) {
+  const seq = etapasTrilha(a, ct);
+  const t = (st.trilha ||= {});
+  let e = t[a], mudou = false;
+  if (e && !e.fim && seq[e.k]?.c !== e.c) {   // a sequência mudou (outra língua estrangeira): acha a mesma etapa
+    const k = seq.findIndex(s => s.c === e.c && s.tipo === e.tipo && s.giro === e.giro);
+    e = k >= 0 ? { ...e, k } : null;
+    mudou = true;
+  }
+  const comecar = k => {
+    for (; k < seq.length; k++) {
+      const s = seq[k], resta = ct.resta(s.c);
+      if (resta <= 0) continue;
+      const fr = s.tipo === 'foco' ? TRILHA.foco : TRILHA.revisao;
+      const quota = s.giro > 1 ? resta : Math.min(resta, Math.max(TRILHA.min, Math.ceil(resta * fr)));
+      return { k, c: s.c, tipo: s.tipo, giro: s.giro, base: ct.feitas[s.c] || 0, quota, ini: hoje() };
+    }
+    return { k: seq.length, fim: true };
+  };
+  if (!e) { e = comecar(0); mudou = true; }
+  if (pular && !e.fim) { e = comecar(e.k + 1); mudou = true; }
+  while (!e.fim && ((ct.feitas[e.c] || 0) - e.base >= e.quota || ct.resta(e.c) <= 0)) { e = comecar(e.k + 1); mudou = true; }
+  if (mudou) { t[a] = e; salvar(); }
+  if (e.fim) return null;
+  const feitas = Math.max(0, Math.min(e.quota, (ct.feitas[e.c] || 0) - e.base));
+  return { ...e, feitas, falta: e.quota - feitas, prox: seq.slice(e.k + 1).find(s => ct.resta(s.c) > 0) || null };
+}
+// marca de cada questão nova na última fila montada: 'foco' (tema da etapa) ou 'passada' (tema que já passou)
+let marcaTrilha = {};
+// ordena as novas de uma área seguindo a trilha: foco, foco, tema passado, foco, foco, …
+function ordemTrilha(a, lista, ct) {
+  const e = etapaAtual(a, ct);
+  if (!e) return lista;
+  const seq = etapasTrilha(a, ct);
+  const passados = new Set(seq.slice(0, e.k).map(s => s.c));
+  passados.delete(e.c);
+  const porTema = {};
+  for (const q of lista) (porTema[temaDe(q.id)] ||= []).push(q);
+  const resta = {};
+  for (const c in porTema) resta[c] = porTema[c].length;
+  const ult = { ...ct.ult };
+  let relogio = 0;
+  const usado = new Set(), out = [];
+  const tira = (q, marca) => { usado.add(q.id); out.push(q); resta[temaDe(q.id)]--; if (marca) marcaTrilha[q.id] = marca; };
+  const doFoco = () => porTema[e.c]?.find(q => !usado.has(q.id));
+  const dePassado = () => {
+    const cs = [...passados].filter(c => (resta[c] || 0) > Math.ceil((ct.total[c] || 0) * TRILHA.reserva));
+    if (!cs.length) return null;
+    cs.sort((x, y) => (ult[x] || '').localeCompare(ult[y] || ''));   // o visto há mais tempo primeiro
+    ult[cs[0]] = `~${String(relogio++).padStart(5, '0')}`;            // e vai para o fim da vez
+    return porTema[cs[0]].find(q => !usado.has(q.id));
+  };
+  const qualquer = () => lista.find(q => !usado.has(q.id) && temaDe(q.id) !== e.c);
+  for (let j = 0; out.length < lista.length; j++) {
+    const querFoco = TRILHA.padrao[j % TRILHA.padrao.length];
+    let q = querFoco ? doFoco() : dePassado(), marca = q ? (querFoco ? 'foco' : 'passada') : null;
+    if (!q) { q = querFoco ? dePassado() || qualquer() : qualquer() || doFoco(); marca = q && temaDe(q.id) === e.c ? 'foco' : q && passados.has(temaDe(q.id)) ? 'passada' : null; }
+    if (!q) q = lista.find(x => !usado.has(x.id));
+    tira(q, marca);
+  }
+  return out;
+}
+// temas em etapa de revisão agora (as revisões adiantadas deles vêm primeiro)
+function temasEmRevisao() {
+  if (!trilhaLigada()) return new Set();
+  const ct = contagemTemas();
+  return new Set(ORDEM_AREAS.map(a => etapaAtual(a, ct)).filter(e => e?.tipo === 'revisao').map(e => e.c));
 }
 
 // ---------------------------------------------------------------- cronograma
@@ -426,9 +564,16 @@ const NOME_BLOCO = { novas: 'questões novas', extras: 'extras', rev: 'revisões
 function montarItens(tipo, tam, alvo) {
   const revItem = q => ({ id: q.id, tipo: 'rev', ...(reg(q.id).prox > hoje() ? { adiantada: true } : {}) });
   const novaItem = (q, foco) => (foco ? { id: q.id, tipo: 'nova', foco } : { id: q.id, tipo: 'nova' });
+  const daTrilha = q => (marcaTrilha[q.id] ? { ...novaItem(q), tr: marcaTrilha[q.id] } : novaItem(q));
   const intercalar = (R, N) => { const out = []; while (R.length || N.length) { if (N.length) out.push(N.shift()); if (R.length) out.push(R.shift()); } return out; };
   const venc = vencidas();
-  if (tipo === 'rev') return (venc.length ? venc : adiantaveis()).slice(0, tam).map(revItem);
+  if (tipo === 'rev') {
+    if (venc.length) return venc.slice(0, tam).map(revItem);
+    // sem vencidas: adianta primeiro as dos temas que estão em etapa de revisão na trilha
+    const emRev = temasEmRevisao();
+    const ad = adiantaveis();
+    return ad.filter(q => emRev.has(temaDe(q.id))).concat(ad.filter(q => !emRev.has(temaDe(q.id)))).slice(0, tam).map(revItem);
+  }
   if (tipo === 'reforco') return reforcosPendentes().slice(0, tam).map(({ e, q }) => ({ id: q.id, tipo: 'nova', ref: e.id }));
   if (tipo === 'tema' || tipo === 'area') {
     const doAlvo = q => (tipo === 'tema' ? noAlvo(temaDe(q.id), alvo) : q.area === alvo);
@@ -439,7 +584,7 @@ function montarItens(tipo, tam, alvo) {
       const ja = new Set(revs.map(q => q.id));
       revs = revs.concat(adiantaveis().filter(q => doAlvo(q) && !ja.has(q.id)).slice(0, tam - revs.length - novas.length));
     }
-    return intercalar(revs.map(revItem), novas.map(q => novaItem(q, tipo === 'tema' ? alvo : null)));
+    return intercalar(revs.map(revItem), novas.map(q => (tipo === 'tema' ? novaItem(q, alvo) : daTrilha(q))));
   }
   // novas (com reforço: ~1 em cada 3 vem dos temas mais fracos) e misto (metade revisões vencidas)
   const revs = tipo === 'misto' ? venc.slice(0, Math.ceil(tam / 2)) : [];
@@ -448,14 +593,15 @@ function montarItens(tipo, tam, alvo) {
   const reforco = [];
   const alvoFoco = st.cfg.foco ? temasFoco() : [];
   if (alvoFoco.length && nNovas >= 2) {
-    for (let k = 0; k < Math.max(1, Math.round(nNovas / 3)); k++) {
+    // com a trilha de focos, os pontos fracos pegam menos vagas (~1 em 6) para o tema em foco continuar sendo a maioria
+    for (let k = 0; k < Math.max(1, Math.round(nNovas / (trilhaLigada() ? 6 : 3))); k++) {
       const c = alvoFoco[k % alvoFoco.length].c;
       const q = cands.find(x => noAlvo(temaDe(x.id), c) && !reforco.some(r => r.q === x));
       if (q) reforco.push({ q, c });
     }
     cands = cands.filter(x => !reforco.some(r => r.q === x));
   }
-  const novas = cands.slice(0, nNovas - reforco.length).map(q => novaItem(q));
+  const novas = cands.slice(0, nNovas - reforco.length).map(daTrilha);
   reforco.forEach((r, k) => novas.splice(Math.min(novas.length, 1 + k * 3), 0, novaItem(r.q, r.c)));
   return intercalar(revs.map(revItem), novas);
 }
@@ -1119,6 +1265,7 @@ function telaInicio() {
     </div>
     ${cardFoco()}
     ${agendaHTML(p, f, itens)}
+    ${cardTrilha(p)}
     ${cardSemanaMes(p)}
     ${semanasAteProvaHTML(p)}
     ${prontidaoHTML()}
@@ -1147,6 +1294,7 @@ function telaInicio() {
   $app.querySelector('[data-ag=extras-cont]')?.addEventListener('click', () => retomar('extras'));
   $app.querySelector('[data-ag=sim-adiar]')?.addEventListener('click', () => { (st.simAdiados ||= []).push(h); st.simAdiados = st.simAdiados.slice(-30); salvar(); rota(); });
   ligarTreinar();
+  ligarTrilha();
 }
 
 // ---------------------------------------------------------------- questões (responder livremente)
@@ -1192,6 +1340,55 @@ function telaQuestoes() {
   $app.querySelectorAll('[data-bloco]').forEach(b => b.addEventListener('click', () => { st.cfg.bloco = +b.dataset.bloco; salvar(); rota(); }));
   $app.querySelectorAll('[data-area-q]').forEach(b => b.addEventListener('click', () => iniciar(st.cfg.bloco, 'area', b.dataset.areaQ)));
   ligarTreinar();
+}
+
+// ---- trilha de focos no cronograma: o tema em foco de cada área, quanto falta, o próximo e a trilha inteira
+const COR_AREA = { LC: 'azul', CH: 'laranja', CN: 'verde', MT: 'roxo' };
+function cardTrilha(p) {
+  if (!trilhaLigada() || p.retaFinal) return '';
+  const ct = contagemTemas();
+  const areas = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS;
+  // questões do foco por dia corrido em cada área: novas de um dia normal × peso médio ÷ áreas × 2/3
+  const pesoDia = p.pesos.reduce((s, x) => s + x, 0) / 7;
+  const porDia = p.unidade * pesoDia / areas.length * (TRILHA.padrao.filter(Boolean).length / TRILHA.padrao.length);
+  const linhas = areas.map(a => {
+    const e = etapaAtual(a, ct);
+    if (!e) return `<li class="tr-area ${a}">${chipArea(a)}<span class="small muted">Trilha concluída: as novas que sobrarem vêm na ordem normal.</span></li>`;
+    const nDias = porDia > 0 ? Math.max(1, Math.ceil(e.falta / porDia)) : 0;
+    return `<li class="tr-area ${a}">
+      <div class="tr-topo">${chipArea(a)}${e.tipo === 'revisao' ? `<span class="chip tag-rev">${e.giro > 1 ? `🔁 Revisão · ${e.giro}º giro` : '🔁 Revisão'}</span>` : ''}</div>
+      <div class="tr-tema"><span class="small muted">${esc(materiaDe(e.c))}</span><b>${esc(nomeTema(e.c))}</b></div>
+      <span class="barra fina"><i style="width:${Math.max(3, pct(e.feitas, e.quota))}%"></i></span>
+      <span class="small muted">${e.feitas} de ${e.quota} questões${nDias ? ` · ~${dias(nDias)}` : ''}</span>
+      ${e.prox ? `<span class="small muted">Depois: ${e.prox.tipo === 'revisao' ? '🔁 revisão de ' : ''}${esc(rotuloTema(e.prox.c))}</span>` : ''}
+      <div class="tr-acoes"><button class="btn mini" type="button" data-treinar="${e.c}" title="Bloco só deste tema (revisões dele + novas)">Treinar</button>
+        <button class="btn fantasma mini" type="button" data-pular="${a}" title="Passa para o próximo tema (este volta nas revisões)">Pular</button></div>
+    </li>`;
+  }).join('');
+  const toda = areas.map(a => {
+    const seq = etapasTrilha(a, ct), e = etapaAtual(a, ct);
+    const k = e ? e.k : seq.length, giro = e ? e.giro : 1;
+    const doGiro = seq.map((s, i) => ({ ...s, i })).filter(s => s.giro === giro);
+    const fase = (s) => (s.i < k ? 'feita' : s.i === k ? 'atual' : ct.resta(s.c) > 0 ? '' : 'vazia');
+    return `<details class="tr-toda ${a}"><summary>${chipArea(a)} <span class="small muted">${giro > 1 ? `${giro}º giro (revisão) · ` : ''}etapa ${Math.min(doGiro.length, doGiro.filter(s => s.i < k).length + 1)} de ${doGiro.length}</span></summary>
+      <ol>${doGiro.map(s => `<li class="${fase(s)}">${s.i < k ? '✓ ' : s.i === k ? '▶ ' : ''}${s.tipo === 'revisao' ? '🔁 Revisão: ' : ''}${esc(rotuloTema(s.c))}<span class="small muted"> · ${ct.resta(s.c)} novas</span></li>`).join('')}</ol>
+      <p class="small muted">${giro < 4 ? 'Depois deste giro: um giro só de revisões, tema por tema, com as questões novas que sobrarem de cada um.' : ''}</p>
+    </details>`;
+  }).join('');
+  return `<section class="card trilha">
+    <div class="titulo-linha"><h2>📚 Foco do momento</h2></div>
+    <p class="small muted" style="margin-top:0">Em cada área, <b>2 de cada 3</b> questões novas vêm do tema em foco; a outra, de um tema que já passou (o que você viu há mais tempo). Cada tema guarda questões para voltar nas revisões — a cada 3 temas, uma revisão de um antigo.</p>
+    <ul class="tr-lista">${linhas}</ul>
+    <details class="tr-mais"><summary class="small">Ver a trilha completa</summary>${toda}</details>
+  </section>`;
+}
+function ligarTrilha() {
+  $app.querySelectorAll('[data-pular]').forEach(b => b.addEventListener('click', () => {
+    const a = b.dataset.pular, e = etapaAtual(a);
+    if (!e || !confirm(`Pular "${rotuloTema(e.c)}" e ir para o próximo tema de ${AREAS[a]}? As questões que sobraram dele voltam nas etapas de revisão.`)) return;
+    etapaAtual(a, contagemTemas(), true);
+    rota();
+  }));
 }
 
 function cardFoco() {
@@ -1406,7 +1603,9 @@ function telaEstudar() {
     ? `<span class="chip tag-rev">↺ Revisão · caixa ${r?.caixa || 1}</span>`
     : item.tipo === 'pratica' ? '<span class="chip">Prática</span>'
     : item.ref ? '<span class="chip tag-foco" title="Questão nova do mesmo assunto de uma que você errou">🧩 Reforço do erro</span>'
-    : item.foco ? '<span class="chip tag-foco" title="Questão de um dos seus temas mais fracos">🎯 Reforço</span>' : '<span class="chip">Nova</span>';
+    : item.foco ? '<span class="chip tag-foco" title="Questão de um dos seus temas mais fracos">🎯 Reforço</span>'
+    : item.tr === 'foco' ? `<span class="chip tag-trilha" title="Tema em foco: ${esc(rotuloTema(temaDe(q.id)))}">📚 Foco</span>`
+    : item.tr === 'passada' ? '<span class="chip tag-trilha" title="Questão nova de um tema que já passou pelo foco">↩ Tema passado</span>' : '<span class="chip">Nova</span>';
   // voltar para a questão anterior do bloco: só para rever — a resposta já registrada não muda
   const anterior = !s.avulsa && s.i > 0 ? '<button class="btn fantasma" id="btn-ant" title="Rever a questão anterior (a resposta não muda) · tecla ←" aria-label="Questão anterior">←</button>' : '';
 
@@ -2282,14 +2481,16 @@ function telaAjustes() {
       <select id="lingua"><option value="ING" ${c.lingua === 'ING' ? 'selected' : ''}>Inglês</option><option value="ESP" ${c.lingua === 'ESP' ? 'selected' : ''}>Espanhol</option></select>
       <label class="campo" for="ordem">Ordem das questões novas</label>
       <select id="ordem">
-        <option value="intercalado" ${c.ordem === 'intercalado' ? 'selected' : ''}>Intercalado — uma de cada área, das provas mais recentes às mais antigas</option>
+        <option value="intercalado" ${c.ordem === 'intercalado' ? 'selected' : ''}>Intercalado — uma de cada área por vez${c.trilha !== false ? ', seguindo a trilha de focos' : ', das provas mais recentes às mais antigas'}</option>
         <option value="prova" ${c.ordem === 'prova' ? 'selected' : ''}>Prova por prova — termina 2025 inteira, depois 2024…</option>
       </select>
       <label class="campo">Áreas</label>
       <div class="dias">${ORDEM_AREAS.map(a => `<label><input type="checkbox" data-area="${a}" ${c.areas.includes(a) ? 'checked' : ''}> ${AREAS[a]}</label>`).join('')}</div>
       <p class="small muted">Desmarcar uma área só muda o que aparece nos blocos; o cronograma continua contando todas.</p>
+      <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="trilha" ${c.trilha !== false ? 'checked' : ''}> 📚 Trilha de focos</label></div>
+      <p class="small muted">Ligado (com a ordem intercalada): cada área tem um tema em foco por vez — 2 de cada 3 questões novas da área vêm dele, a outra de um tema que já passou. O foco usa metade das questões do tema; o resto fica para as revisões (uma a cada 3 temas e um giro só de revisões no fim). Veja no Cronograma, em “Foco do momento”.</p>
       <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="foco" ${c.foco ? 'checked' : ''}> 🎯 Reforçar pontos fracos</label></div>
-      <p class="small muted">Ligado: cerca de 1 em cada 3 questões novas dos blocos vem dos seus 3 temas mais fracos (veja em Erros › Onde você mais erra).</p>
+      <p class="small muted">Ligado: cerca de 1 em cada 3 questões novas dos blocos (1 em cada 6 com a trilha de focos) vem dos seus 3 temas mais fracos (veja em Erros › Onde você mais erra).</p>
     </section>
     <section class="card">
       <h2>Explicações com IA (opcional)</h2>
@@ -2317,6 +2518,7 @@ function telaAjustes() {
   g('lingua').addEventListener('change', e => { c.lingua = e.target.value; salvar(); });
   g('ordem').addEventListener('change', e => { c.ordem = e.target.value; salvar(); });
   g('foco').addEventListener('change', e => { c.foco = e.target.checked; salvar(); });
+  g('trilha').addEventListener('change', e => { c.trilha = e.target.checked; salvar(); rota(); });
   g('red-crono').addEventListener('change', e => { c.redacao = e.target.checked; if (st.log[hoje()]) delete st.log[hoje()].m; salvar(); });
   g('sim-crono').addEventListener('change', e => { c.simCrono = e.target.checked; if (st.log[hoje()]) delete st.log[hoje()].m; salvar(); });
   g('meta-acerto').addEventListener('change', e => { c.metaAcerto = +e.target.value; salvar(); });
@@ -2415,6 +2617,12 @@ function telaLogica() {
       <h2>1. Uma passada por todas as questões</h2>
       <p>São todas as provas azuis de 2010 a 2025 (~2.800 questões, sem as anuladas). Cada questão nova aparece <b>uma vez</b>.
       Por padrão elas vêm <b>intercaladas</b> (uma de cada área), começando pelas provas mais recentes — que são as mais parecidas com a prova que você vai fazer.</p>
+    </section>
+    <section class="card">
+      <h2>📚 Trilha de focos</h2>
+      <p>Cada área tem <b>um tema em foco por vez</b> (ex.: Biologia › Citologia e bioquímica, Matemática › Geometria plana). Em cada área, <b>2 de cada 3 questões novas</b> vêm desse tema, de provas de vários anos; a outra vem de um tema que <b>já passou</b> pelo foco — o que você viu há mais tempo —, para ele não sumir da cabeça.</p>
+      <p>A etapa de foco usa só <b>metade</b> das questões novas que faltam do tema, e as questões de tema passado nunca usam os últimos 30% de um tema. Isso fica para as <b>revisões</b>: depois de cada 3 temas, uma etapa de revisão do tema mais antigo; e, no fim do primeiro giro, um giro só de revisões, tema por tema, com tudo o que sobrou. Assim nenhum tema se esgota no começo e todos continuam aparecendo até o fim das questões novas.</p>
+      <p class="small muted">As matérias de cada área se alternam (Biologia → Física → Química → Biologia…). A etapa avança quando você faz as questões dela, em qualquer lugar; dá para pular um tema no cronograma. Desliga em Ajustes.</p>
     </section>
     <section class="card">
       <h2>2. Errou? Volta até você dominar</h2>
@@ -4086,6 +4294,9 @@ function mesclarEstado(loc, rem, primeira) {
   out.simulados = uniao(loc.simulados, rem.simulados).sort((x, y) => porData(x.data, y.data));
   out.simAdiados = uniao(loc.simAdiados, rem.simAdiados);
   out.desafiosFeitos = { ...(rem.desafiosFeitos || {}), ...(loc.desafiosFeitos || {}) };
+  // trilha de focos: em cada área, a etapa mais adiantada dos dois lados
+  out.trilha = { ...(loc.trilha || {}) };
+  for (const [a, e] of Object.entries(rem.trilha || {})) if (!out.trilha[a] || (e?.k || 0) > (out.trilha[a].k || 0)) out.trilha[a] = e;
   out.mod = Math.max(loc.mod || 0, rem.mod || 0);
   return out;
 }

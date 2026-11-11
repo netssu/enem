@@ -1,4 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#2f6b4f"/>
-  <text x="32" y="47" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="44" fill="#fbfaf6">E</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- quadrado azul com a "borda de baixo" mais escura (como os botões do app) -->
+  <rect width="512" height="512" rx="112" fill="#0f5bb3"/>
+  <rect width="512" height="476" rx="112" fill="#1877e0"/>
+  <!-- E de traços arredondados -->
+  <g fill="#fff">
+    <rect x="140" y="112" width="64" height="244" rx="32"/>
+    <rect x="140" y="112" width="222" height="64" rx="32"/>
+    <rect x="140" y="202" width="150" height="64" rx="32"/>
+    <rect x="140" y="292" width="222" height="64" rx="32"/>
+  </g>
+  <!-- ponto dourado: o progresso -->
+  <circle cx="338" cy="234" r="30" fill="#ffc531"/>
 </svg>

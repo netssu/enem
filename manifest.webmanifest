@@ -3,8 +3,8 @@
   "short_name": "ENEM Azul",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#1b1a17",
-  "theme_color": "#2f6b4f",
+  "background_color": "#f6f7fb",
+  "theme_color": "#1877e0",
   "icons": [
     { "src": "icone-180.png", "sizes": "180x180", "type": "image/png" },
     { "src": "icone-512.png", "sizes": "512x512", "type": "image/png" },

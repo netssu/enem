@@ -79,8 +79,12 @@ function carregar() {
 }
 let st = carregar();
 function salvar() {
+  st.mod = Date.now();   // hora da última mudança: na junção com a nuvem, os ajustes do lado mais novo valem
   localStorage.setItem(KEY, JSON.stringify(st));
-  if (st.ranking?.on) setTimeout(() => rankingAgendar(), 0);   // manda o placar da semana (com espera, sem pressa)
+  setTimeout(() => {
+    if (st.ranking?.on) rankingAgendar();   // manda o placar da semana (com espera, sem pressa)
+    syncAgendar();                          // e o progresso para a conta Google, se houver
+  }, 0);
 }
 // revisões marcadas com os intervalos antigos (1, 3, 7, 21 dias): reespaça a partir da última resposta (só empurra para depois)
 if (!st.intervalos2) {
@@ -1011,21 +1015,27 @@ function agendaHTML(p, f, itens) {
   let cab;
   if (!p.hojeEstuda && !obrig.length) cab = 'Hoje é <b>folga</b> no seu cronograma. Se quiser, o desafio do dia e a aba Questões estão aí — sem culpa.';
   else if (completo) cab = `✓ <b>Dia completo!</b> ${p.novasHoje > p.meta && p.meta ? `E com +${p.novasHoje - p.meta} novas além da meta. ` : ''}Daqui para frente é lucro.`;
-  else cab = `Para fechar o dia: <b>~${fmtDur(falta)}</b> <span class="muted">(${feitos} de ${obrig.length} ${obrig.length === 1 ? 'tarefa' : 'tarefas'})</span>`;
-  return `<section class="card destaque agenda">
-    <div class="titulo-linha"><h2>Hoje</h2>${seq > 1 ? `<span class="small muted">🔥 ${seq} dias de desafio seguidos</span>` : ''}</div>
-    ${obrig.length ? `<div class="barra" style="margin:2px 0 10px"><i style="width:${Math.max(2, pct(feitos, obrig.length))}%"></i></div>` : ''}
-    <p class="small" style="margin:0 0 6px">${cab}</p>
+  else cab = `${feitos} de ${obrig.length} ${obrig.length === 1 ? 'tarefa' : 'tarefas'} · faltam <b>~${fmtDur(falta)}</b>`;
+  // cada tipo de tarefa tem a sua cor (como no visual novo): ícone, barra e botão
+  const COR = { novas: 'azul', rev: 'laranja', reforco: 'roxo', red: 'verde', sim: 'rosa', desafio: 'ouro' };
+  return `<section class="card agenda">
+    <div class="ag-topo">
+      <div><h2>Hoje</h2><span class="ag-cab">${cab}</span></div>
+      ${obrig.length ? `<div class="barra ag-barra"><i style="width:${Math.max(2, pct(feitos, obrig.length))}%"></i></div>` : ''}
+    </div>
     ${resumoDia()}
-    <ul class="ag-lista">${itens.map(x => `<li class="ag-item ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">
-      <span class="ag-icone">${x.feito ? '✓' : x.icone}</span>
-      <div class="ag-texto"><b>${esc(x.titulo)}</b>${x.opcional ? ' <span class="chip">opcional</span>' : ''}<span class="small">${x.detalhe}</span>
-        ${x.frac !== undefined && !x.feito ? `<span class="barra fina"><i style="width:${Math.round(100 * Math.min(1, x.frac))}%"></i></span>` : ''}</div>
-      <div class="ag-acoes">${x.min && !x.feito ? `<span class="small muted">~${fmtDur(x.min)}</span>` : ''}
-        ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ${x.opcional ? '' : 'primario'}" href="${x.botao.href}">${esc(x.botao.rotulo)}</a>` : `<button class="btn ${x.opcional ? '' : 'primario'}" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
+    ${seq > 1 ? `<p class="small muted" style="margin:0 0 8px">🔥 ${seq} dias de desafio seguidos</p>` : ''}
+    <ul class="ag-lista">${itens.map(x => `<li class="ag-item cor-${COR[x.id] || 'azul'} ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">
+      <div class="ag-cabeca">
+        <span class="ag-icone">${x.feito ? '✓' : x.icone}</span>
+        <div class="ag-texto"><b>${esc(x.titulo)}</b>${x.opcional ? '<span class="chip">opcional</span>' : ''}<span class="small">${x.detalhe}${x.min && !x.feito ? ` · ~${fmtDur(x.min)}` : ''}</span></div>
+      </div>
+      ${x.frac !== undefined && !x.feito ? `<span class="barra fina"><i style="width:${Math.round(100 * Math.min(1, x.frac))}%"></i></span>` : ''}
+      <div class="ag-acoes">
+        ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ag-btn" href="${x.botao.href}">${esc(x.botao.rotulo)}</a>` : `<button class="btn ag-btn" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
         ${x.extra || ''}</div>
     </li>`).join('')}</ul>
-    <p class="small muted" style="margin:10px 0 0">Quer só responder questões, sem plano? Use a aba <a href="#/questoes">Questões</a> — tudo conta no cronograma do mesmo jeito.</p>
+    <p class="small muted" style="margin:14px 0 0">Quer só responder questões, sem plano? Use a aba <a href="#/questoes">Questões</a> — tudo conta no cronograma do mesmo jeito.</p>
   </section>`;
 }
 
@@ -1042,24 +1052,34 @@ function telaInicio() {
   for (let d = h; d < st.cfg.prova; d = somaDias(d, 1)) if (P[diaSemana(d)] > 0) diasEstudo++;
   $app.innerHTML = `
     <div class="crono-topo">
-      <div><h1>${saudacao()}</h1>
-        <p class="muted" style="margin:0">${p.diasProva > 0 ? 'Seu cronograma até o ENEM.' : 'Configure a data da prova em Ajustes.'}</p></div>
+      <div><div class="sobretitulo">${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+        <h1>${saudacao()} ${p.diasProva > 0 ? 'Bora fechar o dia?' : ''}</h1>
+        ${p.diasProva > 0 ? '' : '<p class="muted" style="margin:0">Configure a data da prova em Ajustes.</p>'}</div>
       ${p.diasProva > 0 ? `<div class="crono-nums">
-        <div><b>${p.diasProva}</b><span>dias para o ENEM</span></div>
-        <div><b>${diasEstudo}</b><span>dias de estudo</span></div>
-        <div><b>${NOME_FASE[faseDe(h, p.fimNovas)]}</b><span>fase atual</span></div></div>` : ''}
+        <span><b class="azul">${p.diasProva}</b> dias pro ENEM</span>
+        <span><b>${pct(POOL().filter(q => feita(q.id)).length, POOL().length)}%</b> do banco</span>
+        <span><b>${NOME_FASE[faseDe(h, p.fimNovas)]}</b> · ${diasEstudo} dias de estudo</span></div>` : ''}
     </div>
     ${cardFoco()}
     ${agendaHTML(p, f, itens)}
-    <section class="card">
-      <div class="titulo-linha"><h2>Esta semana</h2><a class="small" href="#/ajustes">Mudar dias e metas</a></div>
-      ${semanaHTML(p)}
-    </section>
+    ${cardSemanaMes(p)}
+    ${semanasAteProvaHTML(p)}
     ${prontidaoHTML()}
     ${planoAteProvaHTML(p)}
     <p class="small muted" style="text-align:center">Como o cronograma é calculado? <a href="#/logica">Ver a lógica completa →</a></p>
   `;
   $app.querySelectorAll('[data-ir]').forEach(b => b.addEventListener('click', () => itens.find(x => x.id === b.dataset.ir)?.botao?.ir?.()));
+  // semana | mês: troca só o card (a escolha fica guardada neste navegador)
+  const trocaVista = e => {
+    const b = e.target.closest('[data-vista]');
+    if (!b) return;
+    try { localStorage.setItem(VISTA_KEY, b.dataset.vista); } catch { /* vale só agora */ }
+    const novo = document.createElement('div');
+    novo.innerHTML = cardSemanaMes(p);
+    document.getElementById('card-vista').replaceWith(novo.firstElementChild);
+    document.getElementById('card-vista').addEventListener('click', trocaVista);
+  };
+  $app.querySelector('#card-vista')?.addEventListener('click', trocaVista);
   $app.querySelector('[data-ag=red-feita]')?.addEventListener('click', () => {
     if (!confirm('Marcar a redação de hoje como feita (sem mandar para a correção)?')) return;
     (red.feitas ||= []).push(h); salvarRed(); rota();
@@ -1174,6 +1194,130 @@ function semanaHTML(p = plano()) {
   if (sMeta) out += `<p class="small muted" style="margin:10px 0 0">Na semana: <b>${sNovas}</b> de ${sMeta} questões novas.</p>`;
   return out;
 }
+// ---- cronograma no visual novo: semana em linhas (novas, revisões, redação e simulado) ou o mês inteiro
+const VISTA_KEY = 'enem.vista';
+function vistaCrono() { try { return localStorage.getItem(VISTA_KEY) === 'mes' ? 'mes' : 'semana'; } catch { return 'semana'; } }
+// uma célula: tipo (feito, alem, faltou, hoje, futuro, marca, marcaFeita, vazio), cor, número grande e legenda
+function celula(tipo, cor, txt, sub = '', frac) {
+  return `<div class="cel cel-${tipo} cor-${cor}"><b>${txt}</b>${sub ? `<span>${sub}</span>` : ''}${frac !== undefined ? `<i class="cel-barra"><i style="width:${Math.round(100 * Math.min(1, frac))}%"></i></i>` : ''}</div>`;
+}
+function celNovas(p, d, h) {
+  const lg = st.log[d], peso = p.pesos[diaSemana(d)];
+  const meta = d < h ? (lg?.m || 0) : d === h ? p.meta : p.metaFutura(d);
+  const n = lg?.n || 0;
+  if (d > h) return meta ? celula('futuro', 'azul', meta) : celula('vazio', 'azul', '–');
+  if (meta && n > meta) return celula('alem', 'ouro', n, `+${n - meta}`);
+  if (meta && n >= meta) return celula('feito', 'azul', n, '✓');
+  if (d === h) return meta ? celula('hoje', 'azul', `${n}/${meta}`, '', n / meta) : n ? celula('alem', 'ouro', n, 'extra') : celula('vazio', 'azul', peso ? '–' : '☾');
+  if (meta) return celula('faltou', 'verm', `${n}/${meta}`);
+  return n ? celula('alem', 'ouro', n, 'extra') : celula('vazio', 'azul', peso ? '–' : '☾');
+}
+function celRevisoes(d, h, previstas) {
+  const r = st.log[d]?.r || 0;
+  if (d < h) return r ? celula('feito', 'laranja', r) : celula('vazio', 'laranja', '–');
+  if (d === h) { const falta = vencidas().length; return r + falta ? celula('hoje', 'laranja', `${r}/${r + falta}`, '', r / (r + falta)) : celula('vazio', 'laranja', '–'); }
+  return previstas[d] ? celula('futuro', 'laranja', previstas[d]) : celula('vazio', 'laranja', '–');
+}
+function celExtras(p, d, h) {
+  const rf = p.redacao?.feitas.has(d), rs = p.redacao?.dias.get(d);
+  const sf = (st.simulados || []).some(x => x.data === d), ss = p.simulados?.dias.get(d);
+  if (rf && sf) return celula('marcaFeita', 'verde', '✍️📝', 'feitos');
+  if (rf) return celula('marcaFeita', 'verde', '✍️', 'feita');
+  if (sf) return celula('marcaFeita', 'rosa', '📝', 'feito');
+  if (d >= h && rs) return celula('marca', 'verde', '✍️', 'redação');
+  if (d >= h && ss) return celula('marca', 'rosa', '📝', 'simulado');
+  return celula('vazio', 'verde', '–');
+}
+function semanaGradeHTML(p) {
+  const h = hoje(), dom = somaDias(h, -diaSemana(h));
+  const dias7 = Array.from({ length: 7 }, (_, k) => somaDias(dom, k));
+  const previstas = {};
+  for (const q of emRevisao()) { const d = reg(q.id).prox; if (d > h && d <= dias7[6]) previstas[d] = (previstas[d] || 0) + 1; }
+  const linha = (nome, ic, cor, cel) => `<div class="gr-nome"><span class="gr-ic cor-${cor}">${ic}</span><b>${nome}</b></div>${dias7.map(cel).join('')}`;
+  return `<div class="grade-rolagem"><div class="grade-semana">
+    <span></span>${dias7.map((d, k) => `<div class="gr-dia ${d === h ? 'hoje' : ''}"><b>${DIAS_SEMANA[k]}</b><span>${parse(d).getDate()}</span></div>`).join('')}
+    ${linha('Questões novas', '➕', 'azul', d => celNovas(p, d, h))}
+    ${linha('Revisões', '↺', 'laranja', d => celRevisoes(d, h, previstas))}
+    ${linha('Redação e simulado', '⭐', 'verde', d => celExtras(p, d, h))}
+  </div></div>`;
+}
+function mesHTML(p) {
+  const h = hoje(), ini = h.slice(0, 8) + '01';
+  const dom = somaDias(ini, -diaSemana(ini));
+  const mes = ini.slice(0, 7);
+  let metas = 0, reds = 0, sims = 0;
+  const cel = d => {
+    const lg = st.log[d], peso = p.pesos[diaSemana(d)], n = lg?.n || 0;
+    const fora = d.slice(0, 7) !== mes;
+    const meta = d < h ? (lg?.m || 0) : d === h ? p.meta : p.metaFutura(d);
+    const rf = p.redacao?.feitas.has(d), rs = p.redacao?.dias.get(d);
+    const sf = (st.simulados || []).some(x => x.data === d), ss = p.simulados?.dias.get(d);
+    if (!fora && d <= h) { if (meta && n >= meta) metas++; if (rf) reds++; if (sf) sims++; }
+    let tipo, cor, v = '', sub = '', ic = '';
+    if (d === h) { tipo = 'hoje'; cor = 'azul'; v = meta ? `${n}/${meta}` : n || ''; sub = 'hoje'; ic = '▶'; }
+    else if (d < h && rf) { tipo = 'marcaFeita'; cor = 'verde'; v = '✍️'; sub = 'redação ✓'; }
+    else if (d < h && meta && n > meta) { tipo = 'alem'; cor = 'ouro'; v = `${n}/${meta}`; sub = `★ +${n - meta}`; ic = '🔥'; }
+    else if (d < h && meta && n >= meta) { tipo = 'feito'; cor = 'verde'; v = `${n}/${meta}`; sub = '✓ meta'; ic = '🔥'; }
+    else if (d < h && meta) { tipo = 'faltou'; cor = 'verm'; v = `${n}/${meta}`; sub = `faltou ${meta - n}`; }
+    else if (d < h && n) { tipo = 'alem'; cor = 'ouro'; v = n; sub = 'extra'; ic = '🔥'; }
+    else if (d > h && ss) { tipo = 'marca'; cor = 'rosa'; v = '📝'; sub = 'simulado'; }
+    else if (d > h && rs) { tipo = 'marca'; cor = 'verde'; v = '✍️'; sub = 'redação'; }
+    else if (!peso) { tipo = 'folga'; cor = 'azul'; sub = 'folga'; ic = '☾'; }
+    else if (d > h && meta) { tipo = 'futuro'; cor = 'azul'; v = meta; sub = 'meta'; }
+    else { tipo = 'vazio'; cor = 'azul'; }
+    return `<div class="cel-mes cel-${tipo} cor-${cor} ${fora ? 'fora' : ''}"><div><b>${parse(d).getDate()}</b><span>${ic}</span></div><div><b>${v}</b><span>${sub}</span></div></div>`;
+  };
+  const dias = [];
+  for (let d = dom; dias.length < 42 && (dias.length < 35 || d.slice(0, 7) === mes); d = somaDias(d, 1)) dias.push(d);
+  while (dias.length % 7) dias.push(somaDias(dias[dias.length - 1], 1));
+  const corpo = dias.map(cel).join('');
+  const nomeMes = parse(ini).toLocaleDateString('pt-BR', { month: 'long' });
+  return `<div class="grade-rolagem"><div class="grade-mes">${DIAS_SEMANA.map(s => `<b class="gm-sem">${s}</b>`).join('')}${corpo}</div></div>
+    <p class="small muted mes-rodape"><span>🔥 ${sequencia()} ${sequencia() === 1 ? 'dia seguido' : 'dias seguidos'}</span><span>✓ ${metas} ${metas === 1 ? 'meta batida' : 'metas batidas'} em ${nomeMes}</span><span>✍️ ${reds} ${reds === 1 ? 'redação' : 'redações'} · 📝 ${sims} ${sims === 1 ? 'simulado' : 'simulados'} no mês</span></p>`;
+}
+function cardSemanaMes(p) {
+  const v = vistaCrono();
+  const nomeMes = new Date().toLocaleDateString('pt-BR', { month: 'long' });
+  return `<section class="card" id="card-vista">
+    <div class="vista-topo">
+      <div><h2>${v === 'mes' ? nomeMes[0].toUpperCase() + nomeMes.slice(1) : 'Esta semana'}</h2>
+        <span class="small muted">${v === 'mes' ? 'O mês inteiro: metas batidas, redações e simulados' : '<a href="#/ajustes">Mudar dias e metas</a>'}</span></div>
+      <div class="seg"><button type="button" data-vista="semana" class="${v === 'semana' ? 'on' : ''}">Semana</button><button type="button" data-vista="mes" class="${v === 'mes' ? 'on' : ''}">Mês</button></div>
+    </div>
+    ${v === 'mes' ? mesHTML(p) : semanaGradeHTML(p)}
+  </section>`;
+}
+// até o ENEM: um quadrado por semana, da semana em que você começou até a da prova
+function semanasAteProvaHTML(p) {
+  const h = hoje(), prova = st.cfg.prova;
+  if (p.diasProva <= 0) return '';
+  const primeira = Object.keys(st.log).sort()[0] || h;
+  const ini = somaDias(primeira, -diaSemana(primeira));
+  const atual = Math.floor(diffDias(ini, h) / 7);
+  const total = Math.min(160, Math.floor(diffDias(ini, prova) / 7) + 1);
+  const fb = fimBase(p.fimNovas);
+  const quad = [];
+  for (let i = 0; i < total; i++) {
+    const a = somaDias(ini, i * 7), b = somaDias(a, 6);
+    if (i < atual) {
+      let estudou = false;
+      for (let d = a; d <= b; d = somaDias(d, 1)) if (st.log[d] && st.log[d].n + st.log[d].r > 0) { estudou = true; break; }
+      quad.push(`<i class="${estudou ? 'sq-feita' : 'sq-vazia'}" title="Semana de ${fmtCurto(a)}${estudou ? ': estudou' : ''}"></i>`);
+    } else quad.push(`<i class="sq-${i === atual ? 'atual' : faseDe(a, p.fimNovas)}" title="Semana de ${fmtCurto(a)} · ${NOME_FASE[faseDe(a, p.fimNovas)]}"></i>`);
+  }
+  const fases = [['base', 'Base', h, fb], ['ritmo', 'Ritmo', fb, p.fimNovas], ['reta', 'Reta', p.fimNovas, prova]]
+    .map(([k, nome, a, b]) => [k, nome, a < h ? h : a, b]).filter(([, , a, b]) => b > a);
+  const mesAno = d => parse(d).toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
+  return `<section class="card">
+    <div class="titulo-linha"><h2>Até o ENEM</h2><span class="small muted">${fmt(prova)}</span></div>
+    <p class="small muted" style="margin:0 0 14px">Cada quadrado é uma semana. Você está na ${atual + 1}ª de ${total}.</p>
+    <div class="semanas-sq">${quad.join('')}</div>
+    <div class="fases-sq" style="grid-template-columns:${fases.map(([, , a, b]) => `${Math.max(1, diffDias(a, b))}fr`).join(' ')}">
+      ${fases.map(([k, nome, a, b]) => `<div class="fq-${k}"><b>${nome}</b><span>${k === 'reta' ? '' : `até ${mesAno(b)}`}</span></div>`).join('')}
+    </div>
+  </section>`;
+}
+
 // o que já foi feito hoje e o que falta para "fechar o dia" (novas da meta + revisões vencidas)
 function diaHoje(p = plano()) {
   const lg = st.log[hoje()] || { n: 0, r: 0, ok: 0 };
@@ -1302,7 +1446,8 @@ function telaEstudar() {
     const fb = document.getElementById('feedback');
     fb.innerHTML = `
       <div class="feedback ${rr.ok ? 'ok' : naoSei ? 'neutro' : 'erro'}">
-        <h2>${rr.ok ? (comAjuda ? 'Acertou, com ajuda' : 'Acertou!') : naoSei ? `A resposta é ${q.resp}` : `Errou — a resposta é ${q.resp}`}${naoSei ? '' : lento}</h2>
+        <h2>${rr.ok ? (comAjuda ? 'Acertou, com ajuda' : 'Mandou bem!') : naoSei ? `A resposta é ${q.resp}` : `A certa é a ${q.resp}`}${naoSei ? '' : lento}</h2>
+        <p class="fb-xp">+${rr.ok ? XP.acerto : XP.erro} XP</p>
         ${estado ? `<p style="margin:0">${estado}</p>` : ''}
         ${temaDe(q.id) ? `<p class="small muted" style="margin:6px 0 0">Tema: ${esc(rotuloTema(temaDe(q.id)))}</p>` : ''}
         ${rr.ok && !comAjuda && item.tipo !== 'pratica' ? `<label style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="chute" ${reg2.h[reg2.h.length - 1][4] ? 'checked' : ''}> Foi chute / não tinha certeza (mandar para revisão)</label>` : ''}
@@ -1326,7 +1471,8 @@ function telaEstudar() {
         <textarea id="nota" placeholder="Ex.: confundi mitose com meiose; lembrar que…">${notaAntiga ? '' : esc(reg2.nota || '')}</textarea>
       </section>` : ''}
     `;
-    document.getElementById('acoes').innerHTML = `${anterior}<button class="btn primario" id="btn-prox">${s.i + 1 < s.itens.length ? 'Próxima →' : 'Concluir'}</button>`;
+    document.getElementById('acoes').innerHTML = `${anterior}<button class="btn primario" id="btn-prox">${s.i + 1 < s.itens.length ? 'Continuar' : 'Concluir'}</button>`;
+    $app.querySelector('.respostas')?.classList.add(rr.ok && !comAjuda ? 'certo' : naoSei ? 'neutro' : 'errado');   // a barra fica verde ou vermelha
     document.getElementById('dica').innerHTML = '';
     document.getElementById('btn-prox').addEventListener('click', proxima);
     document.getElementById('chute')?.addEventListener('change', e => { marcarChute(q.id, e.target.checked, item.ref); mostrarFeedback(); });
@@ -1437,11 +1583,22 @@ function telaFimSessao() {
   const temMais = tipo !== 'reforco' || reforcosPendentes().length > 0;
   const outros = blocosAbertos().filter(x => x !== s && !(prox && chaveDe(x) === prox.id));
   const voltar = s.de && s.de !== '#/estudar' ? s.de : '#/';
+  const segBloco = s.res.reduce((t, r) => t + (r ? Math.min(r.seg || 0, 600) : 0), 0);
+  const xpBloco = acertos * XP.acerto + (total - acertos) * XP.erro;
+  const comemora = total > 0 && (pct(acertos, total) >= 60 || (daMeta && !falta));
   $app.innerHTML = `
-    <section class="card destaque" style="text-align:center">
-      <h1>${tipo === 'rev' ? 'Revisões concluídas!' : tipo === 'reforco' ? 'Reforço concluído!' : daMeta && !falta ? 'Meta de hoje batida! 🎉' : 'Bloco concluído!'}</h1>
-      <p style="font-size:40px;margin:8px 0;font-weight:800">${acertos}/${total}</p>
-      <p class="muted">${total ? `${pct(acertos, total)}% de acerto.` : 'Nenhuma questão respondida.'}${daMeta ? (falta ? ` Faltam ${falta} para a meta de hoje.` : ' Daqui para frente é extra — e adianta o cronograma.') : ''}</p>
+    <section class="fim-bloco">
+      ${comemora ? `<div class="confete" aria-hidden="true">${Array.from({ length: 46 }, (_, i) => `<i style="left:${(i * 37) % 100}%;width:${10 + (i % 3) * 4}px;border-radius:${i % 2 ? 3 : 7}px;background:${['#1877e0', '#23a047', '#f59a1b', '#8f52e8', '#ffc531', '#e0468f'][i % 6]};animation-duration:${(2.4 + (i % 7) * 0.35).toFixed(2)}s;animation-delay:${((i % 9) * 0.18).toFixed(2)}s"></i>`).join('')}</div>` : ''}
+      <div class="fim-emoji">${!total ? '🙂' : comemora ? '🎉' : '💪'}</div>
+      <h1>${tipo === 'rev' ? 'Revisões concluídas!' : tipo === 'reforco' ? 'Reforço concluído!' : daMeta && !falta ? 'Meta de hoje batida!' : 'Bloco completo!'}</h1>
+      <p class="fim-sub">${total ? (daMeta ? (falta ? `Faltam ${falta} para a meta de hoje.` : 'Daqui pra frente é extra — e adianta o cronograma.') : comemora ? 'Mandou muito.' : 'Cada erro agora é uma questão a menos pra errar na prova.') : 'Nenhuma questão respondida.'}</p>
+      ${total ? `<div class="fim-caixas">
+        <div class="cor-ouro"><b>XP ganho</b><span>⚡ ${xpBloco}</span></div>
+        <div class="cor-verde"><b>Acerto</b><span>🎯 ${pct(acertos, total)}%</span></div>
+        <div class="cor-azul"><b>Tempo</b><span>⏱ ${fmtTempo(segBloco)}</span></div>
+      </div>
+      <p class="small muted" style="margin:0">${acertos} de ${total} certas</p>` : ''}
+      ${marcoDoBloco(total)}
       <div class="linha-btns" style="justify-content:center">
         ${prox ? `<button class="btn primario" data-acao="prox">Próxima tarefa: ${esc(prox.titulo)} →</button>` : ''}
         ${outros.length ? `<button class="btn ${prox ? '' : 'primario'}" data-acao="outro">Continuar ${NOME_BLOCO[chaveDe(outros[0])]} (${outros[0].i + 1}/${outros[0].itens.length})</button>` : ''}
@@ -1512,9 +1669,21 @@ function telaErros() {
   semana += '</div>';
   const n1 = Math.min(venc.length, tam);
   const revAberta = sessaoDe('rev');
+  // as 4 caixas e as recuperadas, em colunas (a altura acompanha a quantidade)
+  const porCaixa = [1, 2, 3, 4].map(c => todas.filter(q => (reg(q.id).caixa || 1) === c).length);
+  const colunas = [
+    ...porCaixa.map((n, i) => ({ n, nome: `Caixa ${i + 1}`, sub: i === 0 ? 'volta em 7–14 dias' : `${INTERVALOS.exa[i + 1]}–${INTERVALOS.hum[i + 1]} dias`.replace('30–30', '30').replace('45–45', '45'), cor: ['verm', 'laranja', 'ouro', 'azul'][i] })),
+    { n: rec, nome: 'Recuperadas', sub: 'saíram do caderno', cor: 'verde' },
+  ];
+  const maior = Math.max(1, ...colunas.map(c => c.n));
+  const caixasHTML = todas.length || rec ? `<section class="card"><div class="caixas">${colunas.map(c => `<div class="caixa cor-${c.cor}">
+      <b class="caixa-n">${c.n}</b><div class="caixa-col" style="height:${Math.round(24 + 96 * c.n / maior)}px"></div>
+      <b class="caixa-nome">${c.nome}</b><span>${c.sub}</span></div>`).join('')}</div></section>` : '';
   $app.innerHTML = `
-    <h1>Caderno de erros</h1>
-    <p class="muted">${todas.length} em revisão · ${rec} recuperadas</p>
+    <div class="titulo-tela"><div><h1>Caderno de erros</h1>
+      <p class="muted" style="margin:0">Cada acerto numa revisão sobe a questão uma caixa. Passou da 4ª, recuperou.</p></div>
+      ${venc.length && !revAberta ? `<button class="btn btn-laranja" data-acao="rev-topo">Revisar ${venc.length} ${venc.length === 1 ? 'vencida' : 'vencidas'}</button>` : ''}</div>
+    ${caixasHTML}
     <section class="card destaque">
       <h2>Refazer agora</h2>
       <p>${msg}</p>
@@ -1534,6 +1703,7 @@ function telaErros() {
   `;
   ligarTreinar();
   $app.querySelector('[data-acao=bloco]')?.addEventListener('click', () => iniciar(tam, 'rev'));
+  $app.querySelector('[data-acao=rev-topo]')?.addEventListener('click', () => iniciar(tam, 'rev'));
   $app.querySelector('[data-acao=cont-rev]')?.addEventListener('click', () => retomar('rev'));
   $app.querySelector('[data-acao=rapido]')?.addEventListener('click', () => iniciar(5, 'rev'));
 }
@@ -1867,6 +2037,96 @@ function porDiaSemanaHTML() {
 }
 
 // ---------- progresso
+// ---------- números grandes: tudo o que já foi feito, contado desde a primeira questão (inclusive antes deste card existir)
+const MARCOS = [10, 50, 100, 250, 500, 750, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 7500, 10000, 12500, 15000, 20000, 25000, 30000, 40000, 50000];
+function proximoMarco(n) { return MARCOS.find(m => m > n) || (Math.floor(n / 10000) + 1) * 10000; }
+function marcoAnterior(n) { return [...MARCOS].reverse().find(m => m <= n) || 0; }
+function totalRespondidas() { let n = 0; for (const r of Object.values(st.q)) n += r.h?.length || 0; return n; }
+function numerosGrandes() {
+  let n = 0, ok = 0, seg = 0, desde = null;
+  const primeiras = [];   // 1ª tentativa de cada questão: [data, acertou de primeira, segundos]
+  for (const r of Object.values(st.q)) {
+    for (const x of r.h || []) {
+      n++;
+      if (x[2] === 1) ok++;
+      seg += Math.min(x[3] || 0, 600);   // até 10 min por questão: app aberto e esquecido não conta como estudo
+      if (!desde || x[0] < desde) desde = x[0];
+    }
+    const p = r.h?.[0];
+    if (p) primeiras.push([p[0], p[2] === 1 && !p[4], p[3] || 0]);
+  }
+  // antes × agora: as primeiras questões novas contra as mais recentes (até 100 de cada lado, sem sobrepor)
+  primeiras.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  let evolucao = null;
+  if (primeiras.length >= 40) {
+    const k = Math.min(100, Math.floor(primeiras.length / 2));
+    const resumo = xs => {
+      const t = xs.filter(x => x[2] > 0 && x[2] <= 600);
+      return { acerto: pct(xs.filter(x => x[1]).length, xs.length), seg: t.length >= xs.length / 2 ? t.reduce((s, x) => s + x[2], 0) / t.length : 0 };
+    };
+    evolucao = { k, antes: resumo(primeiras.slice(0, k)), agora: resumo(primeiras.slice(-k)) };
+  }
+  const redacoes = (red.cont?.n || 0) + (red.feitas?.length || 0);
+  return { n, ok, seg, desde, evolucao, redacoes, palavras: red.cont?.palavras || 0 };
+}
+function fmtHoras(seg) {
+  const m = Math.round(seg / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return h < 10 && m % 60 ? `${h} h ${m % 60} min` : `${h.toLocaleString('pt-BR')} h`;
+}
+const milhar = n => Math.round(n).toLocaleString('pt-BR');
+function cardNumerosGrandes() {
+  const g = numerosGrandes();
+  if (!g.n) return `<section class="card ng"><div class="ng-num">0</div><div class="ng-rot">questões respondidas</div>
+    <p class="small muted" style="margin:8px 0 0">Responda a primeira e este número começa a crescer — cada revisão e cada simulado contam.</p></section>`;
+  const prox = proximoMarco(g.n), ant = marcoAnterior(g.n);
+  const enem = g.n / 180;
+  const ev = g.evolucao;
+  const seta = (a, b, maiorMelhor) => (maiorMelhor ? b > a : b < a) ? 'ng-sobe' : b === a ? '' : 'ng-desce';
+  return `
+    <section class="card ng">
+      <div class="ng-num" data-conta="${g.n}">${milhar(g.n)}</div>
+      <div class="ng-rot">questões respondidas${g.desde ? ` desde ${fmt(g.desde)}` : ''}</div>
+      <div class="ng-marco">
+        <div class="barra"><i style="width:${pct(g.n - ant, prox - ant)}%;background:var(--azul)"></i></div>
+        <span class="small muted">faltam <b>${milhar(prox - g.n)}</b> para ${milhar(prox)}</span>
+      </div>
+      <div class="grid2 ng-grid">
+        <div class="stat"><b>${fmtHoras(g.seg)}</b><span>resolvendo questões</span></div>
+        <div class="stat"><b>${milhar(g.ok)}</b><span>acertos</span></div>
+        <div class="stat"><b>${enem >= 10 ? milhar(enem) : enem.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</b><span>${enem >= 1 && enem < 2 ? 'ENEM inteiro' : 'ENEMs inteiros'} (180 questões cada)</span></div>
+        <div class="stat"><b>${g.palavras ? milhar(g.palavras) : g.redacoes}</b><span>${g.palavras ? `palavras em ${g.redacoes} ${g.redacoes === 1 ? 'redação' : 'redações'}` : g.redacoes === 1 ? 'redação' : 'redações'}</span></div>
+      </div>
+      ${ev ? `<div class="ng-ev">
+        <div class="small muted">Suas ${ev.k} primeiras questões novas → as ${ev.k} mais recentes</div>
+        <div class="ng-ev-linha"><span>Acerto de primeira</span><b>${ev.antes.acerto}% → <span class="${seta(ev.antes.acerto, ev.agora.acerto, true)}">${ev.agora.acerto}%</span></b></div>
+        ${ev.antes.seg && ev.agora.seg ? `<div class="ng-ev-linha"><span>Tempo por questão</span><b>${fmtTempo(ev.antes.seg)} → <span class="${seta(Math.round(ev.antes.seg), Math.round(ev.agora.seg), false)}">${fmtTempo(ev.agora.seg)}</span></b></div>` : ''}
+      </div>` : ''}
+    </section>`;
+}
+// fim de bloco: avisa quando o bloco cruzou um marco (100, 250, 500, 1.000…)
+function marcoDoBloco(noBloco) {
+  const agora = totalRespondidas(), antes = agora - noBloco;
+  const m = marcoAnterior(agora);
+  if (!noBloco || m < 50 || antes >= m) return '';
+  return `<p class="marco-bloco">🎉 Você passou de <b>${milhar(m)}</b> questões respondidas! <a href="#/progresso">Ver progresso</a></p>`;
+}
+// o número grande sobe de 0 até o total ao abrir a tela
+function animarContagem(el) {
+  const fim = +el.dataset.conta;
+  if (!fim || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const dur = 1100, t0 = performance.now();
+  const passo = t => {
+    if (!el.isConnected) return;
+    const p = Math.min(1, (t - t0) / dur);
+    el.textContent = milhar(fim * (1 - (1 - p) ** 3));
+    if (p < 1) requestAnimationFrame(passo);
+  };
+  el.textContent = '0';
+  requestAnimationFrame(passo);
+}
+
 function telaProgresso() {
   const pool = POOL();
   const anos = [...new Set(pool.map(q => q.ano))].sort((a, b) => b - a);
@@ -1898,6 +2158,7 @@ function telaProgresso() {
   const totOk = porArea.reduce((s, x) => s + x.primeira, 0);
   $app.innerHTML = `
     <h1>Progresso</h1>
+    ${cardNumerosGrandes()}
     <section class="card">
       <div class="grid2">
         <div class="stat"><b>${tot}</b><span>questões feitas de ${pool.length}</span></div>
@@ -1931,6 +2192,8 @@ function telaProgresso() {
       <div class="calor">${calor}</div>
     </section>
   `;
+  const num = $app.querySelector('.ng-num[data-conta]');
+  if (num) animarContagem(num);
 }
 
 // ---------- ajustes
@@ -1978,6 +2241,7 @@ function telaAjustes() {
       <select id="ia">${Object.entries(IAS).map(([k, x]) => `<option value="${k}" ${iaAtual() === k ? 'selected' : ''}>${x.nome}</option>`).join('')}</select>
       <div id="ia-campos"></div>
     </section>
+    ${cardConta()}
     <section class="card">
       <h2>Backup</h2>
       <p class="small muted">O progresso fica salvo só neste navegador. Exporte de vez em quando (ou para levar para outro aparelho).</p>
@@ -2059,13 +2323,7 @@ function telaAjustes() {
   $app.querySelectorAll('[data-area]').forEach(i => i.addEventListener('change', () => {
     c.areas = [...$app.querySelectorAll('[data-area]:checked')].map(x => x.dataset.area); salvar();
   }));
-  $app.querySelector('[data-acao=exportar]').addEventListener('click', () => {
-    const dados = { versao: 1, exportado: new Date().toISOString(), estado: { ...st, cfg: { ...st.cfg, apiKey: '', chaveGoogle: '', chaveOpenai: '' } }, explicacoes };
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(dados)], { type: 'application/json' }));
-    a.download = `enem-progresso-${hoje()}.json`;
-    a.click();
-  });
+  $app.querySelector('[data-acao=exportar]').addEventListener('click', baixarBackup);
   g('importar').addEventListener('change', async e => {
     const f = e.target.files[0];
     if (!f) return;
@@ -2077,15 +2335,19 @@ function telaAjustes() {
       st = { ...padrao(), ...d.estado, cfg: { ...padrao().cfg, ...d.estado.cfg, ...chaves } };
       explicacoes = { ...explicacoes, ...(d.explicacoes || {}) };
       salvar(); salvarExplicacoes();
+      syncSubstituir();   // conectado: o arquivo substitui o que está na conta (não junta)
       alert('Progresso importado!');
       rota();
     } catch (err) { alert('Não consegui ler o arquivo: ' + err.message); }
   });
   $app.querySelector('[data-acao=zerar]').addEventListener('click', () => {
-    if (!confirm('Apagar TODO o progresso? Isso não pode ser desfeito (a não ser que você tenha um backup).')) return;
+    if (!confirm(`Apagar TODO o progresso${conta ? ', também o salvo na sua conta Google' : ''}? Isso não pode ser desfeito (a não ser que você tenha um backup).`)) return;
     const { apiKey, ia, chaveGoogle, modeloGoogle, chaveOpenai, modeloOpenai } = st.cfg;
-    st = padrao(); Object.assign(st.cfg, { apiKey, ia, chaveGoogle, modeloGoogle, chaveOpenai, modeloOpenai }); salvar(); rota();
+    st = padrao(); Object.assign(st.cfg, { apiKey, ia, chaveGoogle, modeloGoogle, chaveOpenai, modeloOpenai }); salvar();
+    syncSubstituir();
+    rota();
   });
+  ligarCardConta();
 }
 
 // ---------- lógica
@@ -2516,6 +2778,8 @@ try { red = { ...red, ...(JSON.parse(localStorage.getItem(KEY_RED)) || {}) }; } 
 // modos: folha (30 linhas, padrão) | foto | livre (caixa de texto solta, para passar a limpo do papel)
 if (!['folha', 'foto', 'livre'].includes(red.rascunho.modo)) red.rascunho.modo = 'folha';
 function salvarRed() {
+  red.mod = Date.now();
+  setTimeout(() => syncAgendar(), 0);
   for (;;) {
     try { localStorage.setItem(KEY_RED, JSON.stringify(red)); return; } catch {
       if (red.hist.length <= 1) return;   // cheio: descarta as correções mais antigas
@@ -2523,6 +2787,9 @@ function salvarRed() {
     }
   }
 }
+// contador permanente de redações corrigidas e palavras (o histórico guarda só as últimas 40 correções)
+function contaPalavras(t) { return (String(t || '').match(/\S+/g) || []).length; }
+if (!red.cont) red.cont = { n: red.hist.length, palavras: red.hist.reduce((s, x) => s + contaPalavras(x.texto), 0) };
 let fotosRed = [];   // fotos da folha (só na memória): { data, mime, url }
 // níveis das marcações: 1 (melhor) a 5 (pior); 0 = leitura duvidosa da foto
 const NIVEIS_RED = {
@@ -3106,6 +3373,7 @@ async function corrigirRedacao(el, botao) {
       aoTerminar: res => {
         const item = { id: Date.now().toString(36), data: new Date().toISOString(), tema: tema || res.tema_usado, modo, texto: modo === 'foto' ? res.transcricao : texto, res };
         red.hist.unshift(item);
+        red.cont.n++; red.cont.palavras += contaPalavras(item.texto);
         red.hist = red.hist.slice(0, 40);
         salvarRed();
         el.dataset.id = item.id;
@@ -3511,17 +3779,24 @@ function placarLocal() {
   }
   return { semana, n, ok: Math.min(ok, n), total };
 }
-function conectarFirebase() {
+// baixa o SDK e espera o login salvo (Google ou anônimo) voltar; não entra em conta nenhuma
+function carregarFirebase() {
   fbP ||= (async () => {
     const base = `https://www.gstatic.com/firebasejs/${FB_VER}/`;
     const [app, auth, fs] = await Promise.all(['firebase-app', 'firebase-auth', 'firebase-firestore'].map(x => import(base + x + '.js')));
     const a = app.initializeApp(FIREBASE);
     const au = auth.getAuth(a);
     await au.authStateReady();
-    if (!au.currentUser) await auth.signInAnonymously(au);
-    return { db: fs.getFirestore(a), uid: au.currentUser.uid, fs };
+    return { au, auth, fs, db: fs.getFirestore(a) };
   })().catch(e => { fbP = null; throw e; });
   return fbP;
+}
+// para o ranking: precisa da conta Google (o app inteiro pede o login antes de abrir)
+async function conectarFirebase() {
+  const f = await carregarFirebase();
+  const u = f.au.currentUser;
+  if (!u || u.isAnonymous) throw Object.assign(new Error('entre com a sua conta Google'), { code: 'sem-conta' });
+  return { db: f.db, uid: u.uid, fs: f.fs };
 }
 function docMeu(fb, semana) { return fb.fs.doc(fb.db, 'semanas', semana, 'jogadores', fb.uid); }
 async function rankingEnviar() {
@@ -3620,6 +3895,7 @@ function telaRanking(arg) {
         ${r.liga ? `<button class="btn mini ${rkAba === 'liga' ? 'primario' : ''}" data-aba="liga">Liga ${esc(r.liga)}</button>` : ''}
         <button class="btn mini ${rkAba === 'geral' ? 'primario' : ''}" data-aba="geral">Geral</button>
       </div>
+      <div class="podio" id="rk-podio"></div>
       <ul class="lista rk-lista" id="rk-lista"><li class="muted">Carregando…</li></ul>
     </section>
     <section class="card">
@@ -3654,10 +3930,22 @@ function telaRanking(arg) {
     const ul = g('rk-lista');
     if (!ul || !ul.isConnected) return;
     const medalha = n => ['🥇', '🥈', '🥉'][n - 1] || `${n}º`;
-    ul.innerHTML = lista.length ? lista.map(x => `<li class="${x.id === uid ? 'rk-eu' : ''}">
-        <div class="rk-nome"><span class="rk-pos">${medalha(x.pos)}</span><span class="tit">${esc(x.apelido)}${x.id === uid ? ' (você)' : ''}</span></div>
-        <div class="small muted" style="text-align:right"><b class="rk-n">${x.n}</b> ${x.n === 1 ? 'questão' : 'questões'}${x.n ? ` · ${pct(x.ok, x.n)}%` : ''}</div></li>`).join('')
-      : '<li class="muted">Ninguém fez questões nesta semana ainda. Seja o primeiro!</li>';
+    const CORES = ['azul', 'rosa', 'verde', 'laranja', 'roxo'];
+    const corDe = x => CORES[[...String(x.apelido || '')].reduce((s, c) => s + c.charCodeAt(0), 0) % CORES.length];
+    const ini = x => esc((x.apelido || '?')[0].toUpperCase());
+    // pódio: os 3 primeiros (2º, 1º, 3º, como num pódio de verdade); a lista segue do 4º
+    const top = lista.slice(0, 3);
+    const podio = g('rk-podio');
+    if (podio) podio.innerHTML = top.length ? [top[1], top[0], top[2]].filter(Boolean).map(x => `<div class="podio-lugar cor-${corDe(x)} ${x.id === uid ? 'eu' : ''}">
+        <span class="podio-medalha">${medalha(x.pos)}</span><span class="podio-ini">${ini(x)}</span>
+        <b>${esc(x.apelido)}${x.id === uid ? ' (você)' : ''}</b>
+        <div class="podio-degrau" style="height:${[130, 96, 72][Math.min(2, x.pos - 1)]}px">${x.n}</div></div>`).join('') : '';
+    const resto = lista.slice(3);
+    ul.hidden = !resto.length && top.length > 0;
+    ul.innerHTML = resto.length ? resto.map(x => `<li class="${x.id === uid ? 'rk-eu' : ''}">
+        <div class="rk-nome"><span class="rk-pos">${x.pos}</span><span class="rk-ini cor-${corDe(x)}">${ini(x)}</span><span class="tit">${esc(x.apelido)}${x.id === uid ? ' (você)' : ''}</span></div>
+        <div class="rk-dir"><b class="rk-n">${x.n}</b><span class="small muted">${x.n ? `${pct(x.ok, x.n)}%` : ''}</span></div></li>`).join('')
+      : top.length ? '' : '<li class="muted">Ninguém fez questões nesta semana ainda. Seja o primeiro!</li>';
     const eu = lista.find(x => x.id === uid);
     const pos = eu ? eu.pos : fora?.pos;
     g('rk-pos').textContent = pos ? `${pos}º` : '—';
@@ -3670,6 +3958,396 @@ function telaRanking(arg) {
   });
 }
 
+// ---------------------------------------------------------------- conta Google: progresso na nuvem (opcional)
+// usuarios/{uid}                  → { rev, z, dados: estado (st) compactado, t }
+// usuarios/{uid}/partes/redacoes  → { z, dados: redações (red) compactadas, t }
+// Cada envio é uma transação: se a nuvem mudou desde a última sincronização deste aparelho (rev diferente),
+// junta os dois lados antes de gravar. Juntar nunca perde tentativas: o histórico das questões é a união dos dois.
+const KEY_CONTA = 'enem.conta';
+const CHAVES_LOCAIS = ['apiKey', 'chaveGoogle', 'chaveOpenai'];      // chaves de API nunca saem do aparelho
+const RED_LOCAL = ['rascunho', 'vivo', 'vivoMarcas', 'vivoTexto'];   // rascunho e correção ao vivo: só deste aparelho
+const SYNC_ESPERA = 20000;
+let conta = null;   // { uid, email, rev (versão da nuvem na última sincronização), enviado, quando, substituir }
+try { conta = JSON.parse(localStorage.getItem(KEY_CONTA)); } catch { conta = null; }
+let syncTimer = null, syncP = null, syncDeNovo = false, syncLido = 0, syncMsg = '';
+function salvarConta() { if (conta) localStorage.setItem(KEY_CONTA, JSON.stringify(conta)); else localStorage.removeItem(KEY_CONTA); }
+function gravarLocal() {   // grava sem marcar como mudança nova (não dispara outra sincronização)
+  localStorage.setItem(KEY, JSON.stringify(st));
+  try { localStorage.setItem(KEY_RED, JSON.stringify(red)); } catch { /* cheio: fica para o próximo salvarRed */ }
+}
+const chaveEnvio = (s, r) => `${s.mod || 0}|${r.mod || 0}`;
+
+// ---- juntar dois progressos
+function uniao(a = [], b = [], chave = x => JSON.stringify(x)) {
+  const m = new Map();
+  for (const x of [...(a || []), ...(b || [])]) if (!m.has(chave(x))) m.set(chave(x), x);
+  return [...m.values()];
+}
+const porData = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+function tentativasDe(s) { let n = 0; for (const r of Object.values(s.q || {})) n += r.h?.length || 0; return n; }
+function mesclarQ(a, b) {
+  const out = { ...a };
+  const ult = r => r.h?.length ? r.h[r.h.length - 1][0] : '';
+  for (const [id, rb] of Object.entries(b)) {
+    const ra = a[id];
+    if (!ra) { out[id] = rb; continue; }
+    // estado (caixa, próxima revisão, motivo…) de quem respondeu por último; histórico: as tentativas dos dois
+    const base = ult(rb) > ult(ra) || (ult(rb) === ult(ra) && (rb.h?.length || 0) > (ra.h?.length || 0)) ? rb : ra;
+    const h = uniao(ra.h, rb.h).sort((x, y) => porData(x[0], y[0]));
+    out[id] = { ...base, h };
+  }
+  return out;
+}
+function mesclarLog(a, b) {
+  const out = { ...a };
+  for (const [d, lb] of Object.entries(b)) {
+    const la = a[d];
+    if (!la) { out[d] = lb; continue; }
+    const x = { ...lb, ...la };
+    for (const k of Object.keys(lb)) if (typeof lb[k] === 'number' && typeof la[k] === 'number') x[k] = Math.max(la[k], lb[k]);
+    out[d] = x;
+  }
+  return out;
+}
+// primeira: primeira sincronização deste aparelho — os ajustes vêm de quem tem mais questões feitas (um aparelho novo
+// tem "mod" recente só por ter sido aberto, e não deve trocar a data da prova e os dias de estudo da conta pelos padrões)
+function mesclarEstado(loc, rem, primeira) {
+  const remNovo = primeira ? tentativasDe(rem) > tentativasDe(loc) : (rem.mod || 0) > (loc.mod || 0);
+  const novo = remNovo ? rem : loc;
+  const out = { ...loc, ...rem, ...novo };
+  out.cfg = { ...padrao().cfg, ...novo.cfg };
+  for (const k of CHAVES_LOCAIS) out.cfg[k] = loc.cfg?.[k] || '';
+  if (/^#\/(estudar|simulado)/.test(location.hash)) {   // no meio de um bloco ou prova: não troca o bloco debaixo da pessoa
+    out.sessao = loc.sessao; out.pausadas = loc.pausadas; out.simulado = loc.simulado;
+  }
+  out.q = mesclarQ(loc.q || {}, rem.q || {});
+  out.log = mesclarLog(loc.log || {}, rem.log || {});
+  out.simulados = uniao(loc.simulados, rem.simulados).sort((x, y) => porData(x.data, y.data));
+  out.simAdiados = uniao(loc.simAdiados, rem.simAdiados);
+  out.desafiosFeitos = { ...(rem.desafiosFeitos || {}), ...(loc.desafiosFeitos || {}) };
+  out.mod = Math.max(loc.mod || 0, rem.mod || 0);
+  return out;
+}
+function mesclarRed(loc, rem) {
+  const out = { ...rem, ...loc };
+  out.hist = uniao(loc.hist, rem.hist, x => x.id).sort((x, y) => porData(y.data, x.data)).slice(0, 40);
+  out.feitas = uniao(loc.feitas, rem.feitas);
+  out.adiadas = uniao(loc.adiadas, rem.adiadas);
+  out.cont = { n: Math.max(loc.cont?.n || 0, rem.cont?.n || 0), palavras: Math.max(loc.cont?.palavras || 0, rem.cont?.palavras || 0) };
+  out.mod = Math.max(loc.mod || 0, rem.mod || 0);
+  return out;
+}
+
+// ---- compactar (gzip) para caber folgado no limite de 1 MB por documento
+async function empacotar(obj, fs) {
+  const txt = JSON.stringify(obj);
+  if (typeof CompressionStream === 'undefined') return { z: 0, dados: txt };
+  const buf = await new Response(new Blob([txt]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+  return { z: 1, dados: fs.Bytes.fromUint8Array(new Uint8Array(buf)) };
+}
+async function desempacotar(d) {
+  if (!d.z) return JSON.parse(d.dados);
+  if (typeof DecompressionStream === 'undefined') throw new Error('navegador antigo demais para ler o progresso da nuvem');
+  return JSON.parse(await new Response(new Blob([d.dados.toUint8Array()]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+}
+function semLocais(s) { const c = { ...s, cfg: { ...s.cfg } }; for (const k of CHAVES_LOCAIS) delete c.cfg[k]; return c; }
+function redSemLocais(r) { const c = { ...r }; for (const k of RED_LOCAL) delete c[k]; return c; }
+function trocarConteudo(alvo, novo) { for (const k of Object.keys(alvo)) delete alvo[k]; Object.assign(alvo, novo); }
+
+// ---- sincronizar: lê a nuvem, junta se ela mudou, grava se algo mudou
+function sincronizar() {
+  if (!FIREBASE || !conta) return Promise.resolve();
+  if (syncP) { syncDeNovo = true; return syncP; }
+  syncP = (async () => {
+    const f = await carregarFirebase();
+    const u = f.au.currentUser;
+    if (!u || u.isAnonymous || u.uid !== conta.uid) {
+      // sessão do Google perdida (ex.: dados do site apagados em parte): pede o login de novo; o progresso daqui
+      // continua no aparelho e é juntado com a conta quando a pessoa entrar
+      conta = null; salvarConta(); rota();
+      return;
+    }
+    const { fs, db } = f;
+    // primeira sincronização deste aparelho: guarda antes uma cópia do progresso de convidado, por garantia
+    if (conta.rev == null && Object.keys(st.q).length) {
+      try { localStorage.setItem('enem.antes-da-conta', JSON.stringify({ quando: new Date().toISOString(), st, red })); } catch { /* cheio */ }
+    }
+    const dEst = fs.doc(db, 'usuarios', u.uid), dRed = fs.doc(db, 'usuarios', u.uid, 'partes', 'redacoes');
+    const stIni = st, redIni = red, chaveIni = chaveEnvio(st, red);
+    let res = null;
+    await fs.runTransaction(db, async tx => {
+      const sE = await tx.get(dEst), sR = await tx.get(dRed);
+      const revNuvem = sE.exists() ? sE.data().rev || 0 : 0;
+      let nSt = stIni, nRed = redIni, veio = false;
+      if (sE.exists() && revNuvem !== conta.rev && !conta.substituir) {
+        nSt = mesclarEstado(stIni, await desempacotar(sE.data()), conta.rev == null);
+        if (sR.exists()) nRed = mesclarRed(redIni, await desempacotar(sR.data()));
+        veio = true;
+      }
+      const grava = veio || revNuvem !== conta.rev || conta.substituir || chaveIni !== conta.enviado;
+      if (grava) {
+        tx.set(dEst, { rev: revNuvem + 1, ...(await empacotar(semLocais(nSt), fs)), t: fs.serverTimestamp() });
+        tx.set(dRed, { ...(await empacotar(redSemLocais(nRed), fs)), t: fs.serverTimestamp() });
+      }
+      res = { nSt, nRed, veio, rev: grava ? revNuvem + 1 : revNuvem, enviado: chaveEnvio(nSt, nRed) };
+    });
+    if (res.veio) {
+      // o que mudou aqui durante a transação também entra (st pode ter avançado enquanto a nuvem respondia)
+      const finalSt = st === stIni && chaveEnvio(st, red) === chaveIni ? res.nSt : mesclarEstado(st, res.nSt, false);
+      const finalRed = mesclarRed(red, res.nRed);
+      trocarConteudo(st, finalSt);
+      trocarConteudo(red, finalRed);
+      gravarLocal();
+    }
+    Object.assign(conta, { rev: res.rev, enviado: res.enviado, quando: new Date().toISOString() });
+    delete conta.substituir;
+    salvarConta();
+    syncLido = Date.now();
+    syncMsg = '';
+    if (chaveEnvio(st, red) !== conta.enviado) syncAgendar();
+    if (res.veio && !/^#\/(estudar|simulado)/.test(location.hash)) rota();   // mostra o que chegou do outro aparelho
+  })().catch(e => {
+    syncMsg = !navigator.onLine ? 'Sem internet — sincroniza quando voltar.' : `Não deu para sincronizar (${e.code || e.message}).`;
+  }).finally(() => {
+    syncP = null;
+    atualizarSyncNaTela();
+    if (syncDeNovo) { syncDeNovo = false; syncAgendar(); }
+  });
+  return syncP;
+}
+function syncAgendar(ms = SYNC_ESPERA) {
+  if (!FIREBASE || !conta || syncTimer) return;
+  syncTimer = setTimeout(() => { syncTimer = null; sincronizar(); }, ms);
+}
+function syncJa() { clearTimeout(syncTimer); syncTimer = null; return sincronizar(); }
+function syncSubstituir() { if (!conta) return; conta.substituir = true; salvarConta(); syncJa(); }
+// saiu do app (trocou de aba, bloqueou o celular): envia o que falta; voltou depois de 1 min: busca o que mudou
+document.addEventListener('visibilitychange', () => {
+  if (!conta) return;
+  if (document.visibilityState === 'hidden') { if (syncTimer || chaveEnvio(st, red) !== conta.enviado) syncJa(); }
+  else if (Date.now() - syncLido > 60000) syncJa();
+});
+
+// ---- entrar e sair
+async function entrarGoogle() {
+  const f = await carregarFirebase();
+  const prov = new f.auth.GoogleAuthProvider();
+  prov.setCustomParameters({ prompt: 'select_account' });
+  const u = f.au.currentUser;
+  let cred;
+  if (u?.isAnonymous) {
+    // promove o login anônimo do ranking para a conta Google (mesmo uid: o placar da semana continua)
+    try { cred = await f.auth.linkWithPopup(u, prov); }
+    catch (e) {
+      if (e.code !== 'auth/credential-already-in-use') throw e;
+      // essa conta Google já entrou em outro aparelho: troca para ela e apaga o placar do anônimo desta semana
+      const c = f.auth.GoogleAuthProvider.credentialFromError(e);
+      if (st.ranking?.on) { try { await f.fs.deleteDoc(f.fs.doc(f.db, 'semanas', segundaDaSemana(), 'jogadores', u.uid)); } catch { /* fica até segunda */ } }
+      cred = await f.auth.signInWithCredential(f.au, c);
+    }
+  } else cred = await f.auth.signInWithPopup(f.au, prov);
+  conta = { uid: cred.user.uid, email: cred.user.email || '', rev: null };
+  salvarConta();
+  rkEnviado = '';
+  await syncJa();
+  if (st.ranking?.on) rankingEnviar().catch(() => { /* vai no próximo salvar */ });
+}
+async function sairDaConta(f) {
+  await f.auth.signOut(f.au);
+  conta = null; salvarConta(); rkEnviado = '';
+  clearTimeout(syncTimer); syncTimer = null; syncMsg = '';
+}
+// o aparelho pode ser compartilhado (computador da escola): ao sair, o progresso sai daqui — ele já está na conta
+function limparAparelho() {
+  st = padrao();
+  trocarConteudo(red, { rascunho: { tema: '', texto: '', modo: 'folha' }, hist: [], cont: { n: 0, palavras: 0 } });
+  gravarLocal();
+  tinta = {};
+  for (const k of [KEY_TINTA, 'enem.antes-da-conta']) localStorage.removeItem(k);
+}
+async function sairGoogle() {
+  await syncJa();
+  if (syncMsg || chaveEnvio(st, red) !== conta?.enviado) {
+    throw Object.assign(new Error('não deu para salvar as últimas mudanças na nuvem'), { code: 'nao-salvou' });
+  }
+  await sairDaConta(await carregarFirebase());
+  limparAparelho();
+}
+// apaga a conta: progresso e redações na nuvem, o placar da semana, o login e o progresso deste aparelho
+async function apagarConta() {
+  const f = await carregarFirebase();
+  const u = f.au.currentUser;
+  if (u) {
+    await f.fs.deleteDoc(f.fs.doc(f.db, 'usuarios', u.uid, 'partes', 'redacoes'));
+    await f.fs.deleteDoc(f.fs.doc(f.db, 'usuarios', u.uid));
+    try { await f.fs.deleteDoc(f.fs.doc(f.db, 'semanas', segundaDaSemana(), 'jogadores', u.uid)); } catch { /* não estava no ranking */ }
+    try { await f.auth.deleteUser(u); } catch { /* login antigo demais para apagar o usuário: os dados já foram */ }
+  }
+  await sairDaConta(f);
+  limparAparelho();
+}
+
+// backup em .json (Ajustes › Exportar, e na tela de entrada antes do primeiro login); sem as chaves de API
+function baixarBackup() {
+  const dados = { versao: 1, exportado: new Date().toISOString(), estado: { ...st, cfg: { ...st.cfg, apiKey: '', chaveGoogle: '', chaveOpenai: '' } }, explicacoes };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(dados)], { type: 'application/json' }));
+  a.download = `enem-progresso-${hoje()}.json`;
+  a.click();
+}
+
+// ---- tela de entrada (todo mundo entra com o Google antes de usar o app)
+function telaEntrar() {
+  const temProgresso = Object.keys(st.q).length > 0;
+  $app.innerHTML = `
+    <div class="entrar">
+      <div class="entrar-hero">
+        <div class="entrar-marca"><span class="logo">E</span><span>enem azul</span></div>
+        <div>
+          <h1>Todas as questões do ENEM. Um plano que se ajusta a você.</h1>
+          <p>${milhar(POOL().length)} questões das provas azuis de 2010 a 2025. Errou? Ela volta no caderno de erros até você dominar.</p>
+        </div>
+        <div class="entrar-tags"><span>📅 Cronograma diário</span><span>✍️ Redação corrigida</span><span>🏆 Liga com amigos</span></div>
+      </div>
+      <div class="entrar-lado"><div class="entrar-caixa">
+        <h2>${temProgresso ? 'Bem-vindo de volta!' : 'Bora começar?'}</h2>
+        ${temProgresso ? `<p class="entrar-aviso"><b>Achamos ${milhar(tentativasDe(st))} ${tentativasDe(st) === 1 ? 'questão respondida' : 'questões respondidas'} neste navegador.</b> Ao entrar, esse progresso vai junto para a sua conta — nada se perde.</p>` : ''}
+        <button class="btn entrar-google" id="entrar-google"><b aria-hidden="true">G</b>Continuar com Google</button>
+        ${temProgresso ? '<button class="btn fantasma" id="entrar-backup" type="button">⬇ Baixar uma cópia do meu progresso antes</button>' : ''}
+        <p class="small" id="entrar-erro" style="color:var(--erro);margin:0" hidden></p>
+        <p class="small muted" style="margin:0">Com a conta, o progresso fica salvo na nuvem e abre igual no celular e no computador. No ranking aparece só o apelido que você escolher — nunca o seu nome ou e-mail. As chaves de API das IAs ficam só no seu aparelho.</p>
+      </div></div>
+    </div>`;
+  carregarFirebase().catch(() => { /* sem rede: o botão tenta de novo */ });   // o popup do Google abre direto no clique
+  document.getElementById('entrar-backup')?.addEventListener('click', baixarBackup);
+  const b = document.getElementById('entrar-google');
+  b.addEventListener('click', async () => {
+    b.disabled = true; b.lastChild.textContent = 'Entrando…';
+    try { await entrarGoogle(); rota(); }
+    catch (e) {
+      b.disabled = false; b.lastChild.textContent = 'Continuar com Google';
+      if (['auth/popup-closed-by-user', 'auth/cancelled-popup-request'].includes(e.code)) return;
+      const el = document.getElementById('entrar-erro');
+      el.hidden = false;
+      el.textContent = msgErroLogin(e);
+    }
+  });
+}
+function msgErroLogin(e) {
+  return e.code === 'auth/popup-blocked' ? 'O navegador bloqueou a janela do Google. Permita pop-ups para este site e tente de novo.'
+    : e.code === 'auth/network-request-failed' || !navigator.onLine ? 'Sem conexão. Confira a internet e tente de novo.'
+    : `Não deu para entrar (${e.code || e.message}).`;
+}
+
+// ---- card em Ajustes
+function quandoSync() {
+  if (!conta?.quando) return 'ainda não sincronizado';
+  const d = new Date(conta.quando), h = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return iso(d) === hoje() ? `sincronizado hoje às ${h}` : `sincronizado em ${fmt(iso(d))} às ${h}`;
+}
+function cardConta() {
+  if (!FIREBASE || !conta) return '';
+  return `
+    <section class="card" id="card-conta">
+      <h2>Conta Google</h2>
+      <p class="small">Conectado como <b>${esc(conta.email || 'sua conta Google')}</b>.</p>
+      <p class="small muted" id="sync-estado">${esc(syncMsg || quandoSync())}</p>
+      <p class="small muted">Na nuvem: questões, cronograma, ajustes e redações. Só neste aparelho: as chaves de API das IAs e os rabiscos.</p>
+      <div class="linha-btns">
+        <button class="btn" data-conta="agora">Sincronizar agora</button>
+        <button class="btn" data-conta="sair">Sair da conta</button>
+        <button class="btn perigo" data-conta="apagar">Apagar minha conta</button>
+      </div>
+      <p class="small muted">Sair guarda tudo na conta e limpa este aparelho (bom para computador compartilhado). Apagar remove o seu progresso da nuvem, deste aparelho e do ranking — exporte um backup antes se quiser guardar.</p>
+    </section>`;
+}
+function atualizarSyncNaTela() {
+  const el = document.getElementById('sync-estado');
+  if (el) el.textContent = syncMsg || (syncP ? 'Sincronizando…' : quandoSync());
+}
+function ligarCardConta() {
+  const card = document.getElementById('card-conta');
+  if (!card) return;
+  card.querySelectorAll('[data-conta]').forEach(b => b.addEventListener('click', async () => {
+    const acao = b.dataset.conta;
+    if (acao === 'sair' && !confirm('Sair da conta? O progresso fica salvo na sua conta e sai deste aparelho.')) return;
+    if (acao === 'apagar' && !confirm('Apagar a sua conta? Todo o progresso some da nuvem, deste aparelho e do ranking. Não dá para desfazer.')) return;
+    b.disabled = true;
+    try {
+      if (acao === 'agora') { const p = syncJa(); atualizarSyncNaTela(); await p; }
+      else if (acao === 'sair') { await sairGoogle(); rota(); }
+      else if (acao === 'apagar') { await apagarConta(); rota(); }
+    } catch (e) {
+      syncMsg = e.code === 'nao-salvou' ? 'Não deu para salvar as últimas mudanças na nuvem. Conecte-se à internet e tente sair de novo (assim nada se perde).'
+        : msgErroLogin(e);
+      atualizarSyncNaTela();
+    }
+    b.disabled = false;
+  }));
+}
+if (conta && FIREBASE) setTimeout(() => syncJa(), 500);   // ao abrir: busca o que mudou em outro aparelho
+// ---------------------------------------------------------------- trilho (coluna da direita, em telas largas)
+// XP: tudo o que já foi feito, contado desde a primeira questão — 10 por acerto, 2 por erro (o esforço conta),
+// 50 por desafio do dia cumprido, 100 por redação corrigida e 30 por simulado
+const XP = { acerto: 10, erro: 2, desafio: 50, redacao: 100, simulado: 30 };
+function xpTotal() {
+  let x = 0;
+  for (const r of Object.values(st.q)) for (const t of r.h || []) x += t[2] === 1 ? XP.acerto : XP.erro;
+  return x + Object.keys(st.desafiosFeitos || {}).length * XP.desafio + (red.cont?.n || 0) * XP.redacao + (st.simulados || []).length * XP.simulado;
+}
+let rkCache = null;   // última leitura do ranking para o trilho: { quando, chave, lista, uid, fora }
+function falaDoDia(pagina, itens) {
+  const obrig = itens.filter(x => !x.opcional), falta = obrig.filter(x => !x.feito).reduce((s, x) => s + x.min, 0);
+  const prox = obrig.find(x => !x.feito);
+  return {
+    '': !obrig.length ? 'Hoje é folga no plano. Quer fazer o desafio do dia mesmo assim?'
+      : falta ? `Faltam ~${fmtDur(falta)} pra fechar o dia.${prox ? ` Começa por ${prox.titulo.toLowerCase()}?` : ''}` : 'Dia completo! Daqui pra frente é lucro. 🎉',
+    questoes: 'Questão livre também conta no cronograma, viu?',
+    simulado: 'Simulado no tempo de prova treina o ritmo do dia do ENEM.',
+    redacao: 'Cada tema do Desafio dos anos acima de 900 vira medalha. Bora?',
+    erros: 'Errar aqui é melhor que errar na prova.',
+    pontos: 'Treinar o tema mais fraco é o que mais sobe a nota.',
+    progresso: 'Olha o tanto que você já andou!',
+    ranking: 'Cada questão da semana conta no placar.',
+    ajustes: 'O cronograma recalcula sozinho quando você muda algo aqui.',
+  }[pagina] || '';
+}
+function renderTrilho(pagina) {
+  const el = document.getElementById('trilho');
+  if (!el) return;
+  if (document.body.classList.contains('foco') || document.body.classList.contains('sem-conta')) { el.innerHTML = ''; return; }
+  const p = plano(), itens = agendaHoje(p, diaHoje(p));
+  const des = itens.find(x => x.id === 'desafio');
+  const r = st.ranking;
+  const eu = rkCache && (rkCache.lista.find(x => x.id === rkCache.uid)?.pos || rkCache.fora?.pos);
+  el.innerHTML = `
+    <div class="tr-nums">
+      <span class="tr-fogo" title="dias seguidos estudando">🔥 ${sequencia()}</span>
+      <span class="tr-xp" title="XP: 10 por acerto, 2 por erro, 50 por desafio, 100 por redação, 30 por simulado">⚡ ${milhar(xpTotal())}</span>
+      ${r?.on ? `<a class="tr-rk" href="#/ranking" title="sua posição no ranking da semana">🏆 ${eu ? `#${eu}` : '—'}</a>` : ''}
+    </div>
+    ${falaDoDia(pagina, itens) ? `<div class="tr-fala">💬 ${esc(falaDoDia(pagina, itens))}</div>` : ''}
+    ${des ? `<section class="tr-card ${des.feito ? 'feito' : ''}">
+      <div class="tr-card-topo"><b>🎯 Desafio do dia</b><span>+${XP.desafio} XP</span></div>
+      <p>${esc(des.titulo.replace(/^Desafio: /, ''))}${des.feito ? ' — cumprido!' : ''}</p>
+      <div class="tr-prog"><div class="barra"><i style="width:${des.feito ? 100 : Math.round(100 * Math.min(1, des.frac || 0))}%"></i></div></div>
+    </section>` : ''}
+    ${FIREBASE && r?.on ? `<section class="tr-card"><div class="tr-card-topo"><b>${r.liga ? `Liga ${esc(r.liga)}` : 'Ranking da semana'}</b><a href="#/ranking">ver tudo</a></div>
+      <div id="tr-liga"><p class="small muted" style="margin:6px 0 0">Carregando…</p></div></section>` : ''}`;
+  if (!(FIREBASE && r?.on)) return;
+  const chave = `${r.liga || ''}|${segundaDaSemana()}`;
+  const mostrar = () => {
+    const box = document.getElementById('tr-liga');
+    if (!box || !rkCache) return;
+    const top = rkCache.lista.slice(0, 5);
+    box.innerHTML = top.length ? top.map(x => `<div class="tr-linha ${x.id === rkCache.uid ? 'eu' : ''}"><b>${x.pos}</b><span class="tr-ini">${esc((x.apelido || '?')[0].toUpperCase())}</span><span class="tr-nome">${x.id === rkCache.uid ? 'Você' : esc(x.apelido)}</span><span class="tr-n">${x.n}</span></div>`).join('')
+      : '<p class="small muted" style="margin:6px 0 0">Ninguém pontuou nesta semana ainda.</p>';
+  };
+  if (rkCache && rkCache.chave === chave && Date.now() - rkCache.quando < 120000) return mostrar();
+  rankingLer(r.liga).then(d => { rkCache = { ...d, chave, quando: Date.now() }; mostrar(); const t = document.querySelector('.tr-rk'); const pos = d.lista.find(x => x.id === d.uid)?.pos || d.fora?.pos; if (t && pos) t.textContent = `🏆 #${pos}`; })
+    .catch(() => { const box = document.getElementById('tr-liga'); if (box) box.innerHTML = '<p class="small muted" style="margin:6px 0 0">Sem conexão com o ranking agora.</p>'; });
+}
+
 // ---------------------------------------------------------------- rotas
 function rota() {
   limpar.forEach(f => f());
@@ -3678,9 +4356,13 @@ function rota() {
     $app.innerHTML = '<div class="card"><h2>Sem questões</h2><p>Rode <code>py tools/extrair.py</code> para gerar <code>app/data/questoes.js</code> a partir dos PDFs.</p></div>';
     return;
   }
+  const semConta = !!FIREBASE && !conta;
+  document.body.classList.toggle('sem-conta', semConta);
+  if (semConta) { telaEntrar(); return; }
   const [, pagina = '', arg] = location.hash.split('/');
   const emProva = pagina === 'simulado' && st.simulado && !st.simulado.fim;
   $app.classList.toggle('larga', pagina === 'estudar' || pagina === 'ver' || emProva);
+  document.body.classList.toggle('foco', pagina === 'estudar' || emProva);   // questão e prova: sem lateral nem trilho
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('ativo',
     a.dataset.nav === ({ pontos: 'erros' }[pagina] || pagina || 'inicio')));
   if (pagina === 'estudar') telaEstudar();
@@ -3695,7 +4377,21 @@ function rota() {
   else if (pagina === 'ranking') telaRanking(arg);
   else if (pagina === 'ver' && BYID[arg]) verQuestao(arg);
   else telaInicio();
+  renderTrilho(pagina);
 }
 document.querySelector('[data-nav="ranking"]')?.toggleAttribute('hidden', !FIREBASE);
+// tema claro/escuro: escolhido no <head> (salvo ou o do sistema); o botão da lateral troca e guarda
+function rotuloBotaoTema() {
+  const b = document.getElementById('troca-tema');
+  if (b) b.innerHTML = document.documentElement.dataset.tema === 'escuro'
+    ? '<span class="ic">☀️</span><span>Modo claro</span>' : '<span class="ic">🌙</span><span>Modo escuro</span>';
+}
+document.getElementById('troca-tema')?.addEventListener('click', () => {
+  const t = document.documentElement.dataset.tema === 'escuro' ? 'claro' : 'escuro';
+  document.documentElement.dataset.tema = t;
+  try { localStorage.setItem('enem.tema', t); } catch { /* sem armazenamento: vale só nesta visita */ }
+  rotuloBotaoTema();
+});
+rotuloBotaoTema();
 window.addEventListener('hashchange', () => { window.scrollTo(0, 0); rota(); });
 rota();

@@ -5,32 +5,43 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>ENEM Azul — todas as questões</title>
   <meta http-equiv="Cache-Control" content="no-cache">
-  <meta name="theme-color" content="#2f6b4f">
+  <meta name="theme-color" content="#1877e0">
+  <script>try { var t = localStorage.getItem('enem.tema') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'escuro' : 'claro'); document.documentElement.dataset.tema = t; } catch (e) {}</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;600;700;800;900&display=swap">
   <link rel="icon" href="icone.svg" type="image/svg+xml">
   <link rel="icon" href="icone-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="icone-180.png">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="style.css?v=202611111057">
+  <link rel="stylesheet" href="style.css?v=202611111238">
 </head>
 <body>
-  <header class="topo">
-    <a href="#/" class="marca"><span class="logo">E</span> ENEM Azul</a>
-    <nav>
-      <a href="#/" data-nav="inicio">Cronograma</a>
-      <a href="#/questoes" data-nav="questoes">Questões</a>
-      <a href="#/simulado" data-nav="simulado">Simulado</a>
-      <a href="#/redacao" data-nav="redacao">Redação</a>
-      <a href="#/erros" data-nav="erros">Erros</a>
-      <a href="#/progresso" data-nav="progresso">Progresso</a>
-      <a href="#/ranking" data-nav="ranking" hidden>Ranking</a>
-      <a href="#/ajustes" data-nav="ajustes">Ajustes</a>
-    </nav>
-  </header>
-  <main id="app"></main>
-  <script src="data/questoes.js?v=202611111057"></script>
-  <script src="data/temas.js?v=202611111057"></script>
-  <script src="data/redacao.js?v=202611111057"></script>
-  <script src="data/referencias.js?v=202611111057"></script>
-  <script type="module" src="app.js?v=202611111057"></script>
+  <div class="casca">
+    <aside class="lateral">
+      <a href="#/" class="marca"><span class="logo">E</span><span>enem azul</span></a>
+      <nav>
+        <a href="#/" data-nav="inicio" class="nav-crono"><span class="ic">📅</span><span><b>Cronograma</b><small>seu plano até o ENEM</small></span></a>
+        <div class="nav-sec">Extras</div>
+        <a href="#/questoes" data-nav="questoes"><span class="ic">✏️</span><span>Questões</span></a>
+        <a href="#/simulado" data-nav="simulado"><span class="ic">📝</span><span>Simulado</span></a>
+        <a href="#/redacao" data-nav="redacao"><span class="ic">✍️</span><span>Redação</span></a>
+        <a href="#/erros" data-nav="erros"><span class="ic">📕</span><span>Erros</span></a>
+        <a href="#/progresso" data-nav="progresso"><span class="ic">📈</span><span>Progresso</span></a>
+        <a href="#/ranking" data-nav="ranking" hidden><span class="ic">🏆</span><span>Ranking</span></a>
+        <div class="lateral-pe">
+          <button type="button" id="troca-tema"><span class="ic">🌙</span><span>Modo escuro</span></button>
+          <a href="#/ajustes" data-nav="ajustes"><span class="ic">⚙️</span><span>Ajustes</span></a>
+        </div>
+      </nav>
+    </aside>
+    <main id="app"></main>
+    <aside class="trilho" id="trilho"></aside>
+  </div>
+  <script src="data/questoes.js?v=202611111238"></script>
+  <script src="data/temas.js?v=202611111238"></script>
+  <script src="data/redacao.js?v=202611111238"></script>
+  <script src="data/referencias.js?v=202611111238"></script>
+  <script type="module" src="app.js?v=202611111238"></script>
 </body>
 </html>

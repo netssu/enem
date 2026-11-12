@@ -769,7 +769,7 @@ html[data-tema="escuro"] .chip.CH { color: var(--laranja); }
 .ag-barra { flex: 0 1 220px; min-width: 120px; margin: 0; }
 .ag-lista { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
 .ag-item { display: flex; flex-direction: column; gap: 10px; padding: 16px; border: 2px solid var(--line); border-radius: 20px; box-shadow: 0 4px 0 var(--line); background: var(--card); }
-.ag-cabeca { display: flex; align-items: center; gap: 12px; }
+.ag-cabeca { display: flex; align-items: flex-start; gap: 12px; }
 .ag-item .ag-icone { display: grid; place-items: center; flex: none; width: 46px; height: 46px; border-radius: 14px; background: var(--c-cl); color: var(--c); font-size: 24px; border: 0; }
 .ag-item .ag-texto { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .ag-item .ag-texto b { font-size: 16px; font-weight: 900; }
@@ -1084,7 +1084,35 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 .player-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .player-li { list-style: none; border: 0 !important; padding: 0 !important; display: block !important; }
 .player-li > .player-aula { margin-top: 0; }
-/* no cronograma, o cartão da aula ocupa a linha toda enquanto o vídeo toca */
-.ag-item.tocando { grid-column: 1 / -1; }
-.ag-item.tocando .ag-acoes { display: none; }   /* o player tem os próprios botões */
-.ag-item .player-aula { margin-top: 0; }
+
+/* ---------- aula do dia: cartão largo em cima do "Hoje" (capa | texto e botões); o player abre no lugar da capa ---------- */
+.ag-aula { margin-bottom: 14px; padding: 14px; }
+.ag-aula.tocando .aula-hero { display: none; }
+.ag-aula .player-aula { margin-top: 0; border: 0; padding: 0; background: transparent; }
+.aula-hero { display: flex; gap: 18px; align-items: center; min-width: 0; }
+.aula-capa { position: relative; flex: 0 0 248px; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #000; display: block; }
+.aula-capa img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .2s; }
+.aula-capa:hover img { transform: scale(1.04); }
+.aula-play { position: absolute; inset: 0; margin: auto; width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; padding-left: 4px; background: var(--c); color: #fff; font-size: 22px; box-shadow: 0 4px 0 var(--c-esc); }
+.aula-dur { position: absolute; right: 8px; bottom: 8px; padding: 1px 7px; border-radius: 6px; background: rgba(0, 0, 0, .78); color: #fff; font: 800 12px Nunito, sans-serif; }
+.aula-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.aula-sobre { font: 900 12px Nunito, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--c); }
+.aula-sobre .chip { margin-left: 4px; vertical-align: 1px; }
+.aula-tit { font: 800 20px/1.2 var(--titulo); overflow-wrap: anywhere; }
+.aula-meta { font-size: 13px; font-weight: 700; color: var(--muted); }
+.aula-motivo { color: var(--ink); }
+.aula-botoes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.aula-botoes .ag-btn { width: auto; padding-left: 22px; padding-right: 22px; }
+.aula-todas { margin-left: auto; font-weight: 800; text-decoration: none; }
+.aula-hero.compacta { gap: 12px; }
+.aula-hero.compacta .aula-botoes { margin-top: 0; flex: none; }
+.aula-hero.compacta .aula-info b { font-size: 15px; }
+.aula-hero.compacta .aula-info .aula-meta b { font-size: inherit; color: var(--ink); }
+@media (max-width: 640px) {
+  .aula-hero { flex-direction: column; align-items: stretch; gap: 12px; }
+  .aula-capa { flex: none; width: 100%; }
+  .aula-tit { font-size: 18px; }
+  .aula-todas { margin-left: 0; }
+  .aula-hero.compacta { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .aula-hero.compacta .aula-botoes { width: 100%; }
+}

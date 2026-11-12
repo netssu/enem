@@ -370,6 +370,83 @@ function temasEmRevisao() {
   return new Set(ORDEM_AREAS.map(a => etapaAtual(a, ct)).filter(e => e?.tipo === 'revisao').map(e => e.c));
 }
 
+// ---------------------------------------------------------------- videoaulas
+// Cada tema tem de 1 a 5 videoaulas do YouTube (data/aulas.js, links diretos), e a matemática básica tem as suas
+// (frações, potências, regra de três…). O cronograma põe a aula do dia ANTES das questões novas, sempre de um tema
+// cujas questões vêm a seguir — a aula prepara para as questões. Ordem da fila:
+//   1. temas que você pediu (📌 na aba Aulas), na ordem em que pediu;
+//   2. as aulas dos temas em foco na trilha — primeiro a 1ª aula de cada tema que acabou de entrar em foco, para ela vir
+//      antes de as questões dele se acumularem —, alternando uma a uma com a matemática básica;
+//   3. as aulas do próximo tema de cada área (adianta o que vem depois).
+// Sem trilha (ou na reta final): matemática básica e os temas em que você mais erra.
+const AULAS = window.AULAS || { base: [], temas: {} };
+const AULA_INFO = {};   // id do vídeo -> { id, t, canal, min, c (tema ou grupo da matemática básica) }
+for (const b of AULAS.base) for (const [id, t, canal, min] of b.v) AULA_INFO[id] = { id, t, canal, min, c: b.c };
+for (const [c, l] of Object.entries(AULAS.temas)) for (const [id, t, canal, min] of l) AULA_INFO[id] ||= { id, t, canal, min, c };
+const BASE_NOME = Object.fromEntries(AULAS.base.map(b => [b.c, b.nome]));
+function aulasDoTema(c) { return (BASE_NOME[c] ? AULAS.base.find(b => b.c === c).v : AULAS.temas[c] || []).map(v => AULA_INFO[v[0]]); }
+function rotuloAula(c) { return BASE_NOME[c] ? `Matemática básica › ${BASE_NOME[c]}` : rotuloTema(c); }
+function urlAula(id) { return `https://www.youtube.com/watch?v=${id}`; }
+function aulaVista(id) { return !!st.aulas?.[id]; }
+function aulasPorDia() { return st.cfg.aulasDia ?? 1; }
+function vistasHoje() { const h = hoje(); return Object.values(st.aulas || {}).filter(x => x.d === h && !x.p).length; }
+// a fila das próximas aulas, cada uma com o motivo (por que ela vem agora)
+function filaAulas() {
+  const out = [], usado = new Set();
+  const poe = (v, motivo) => { if (v && !usado.has(v.id) && !aulaVista(v.id)) { usado.add(v.id); out.push({ ...v, motivo }); } };
+  for (const c of st.aulaFila || []) for (const v of aulasDoTema(c)) poe(v, '📌 você pediu');
+  const base = AULAS.base.flatMap(b => b.v.map(v => AULA_INFO[v[0]]));
+  const ct = contagemTemas();
+  const areas = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS;
+  const etapas = trilhaLigada() && !plano().retaFinal ? areas.map(a => etapaAtual(a, ct)).filter(Boolean) : [];
+  if (!etapas.length) {
+    for (const v of base) poe(v, 'base de Matemática');
+    const an = analisePontos();
+    for (const x of an.pronto ? an.fracos : []) for (const v of aulasDoTema(x.c)) poe(v, 'tema em que você mais erra');
+    return out;
+  }
+  // 2–3. aulas dos temas em foco — primeiro a 1ª aula dos temas que acabaram de entrar em foco (o que já tem mais
+  // questões feitas antes), depois o resto — alternando uma a uma com a matemática básica
+  const novos = etapas.filter(e => !aulasDoTema(e.c).some(v => aulaVista(v.id))).sort((x, y) => y.feitas - x.feitas);
+  const focoResto = [...novos.map(e => aulasDoTema(e.c)[0]).filter(Boolean), ...etapas.flatMap(e => aulasDoTema(e.c))]
+    .map(v => ({ v, m: 'tema em foco agora' }));
+  const baseResto = base.map(v => ({ v, m: 'base de Matemática' }));
+  let vezBase = st.aulaUlt !== 'base';
+  while (focoResto.some(x => !usado.has(x.v.id) && !aulaVista(x.v.id)) || baseResto.some(x => !usado.has(x.v.id) && !aulaVista(x.v.id))) {
+    const l = vezBase ? baseResto : focoResto, x = l.find(y => !usado.has(y.v.id) && !aulaVista(y.v.id)) || (vezBase ? focoResto : baseResto).find(y => !usado.has(y.v.id) && !aulaVista(y.v.id));
+    poe(x.v, x.m);
+    vezBase = !vezBase;
+  }
+  // 4. adianta o próximo tema de cada área
+  for (const e of etapas) if (e.prox) for (const v of aulasDoTema(e.prox.c)) poe(v, 'próximo tema da trilha');
+  return out;
+}
+function areaDoTema(c) { return TEMAS.nomes[c]?.[0]; }
+// a aula da vez: fica a mesma o dia todo até você assistir ou pular (a fila pode mudar com as questões do dia)
+function aulaDaVez() {
+  const h = hoje(), d = st.aulaDia;
+  if (d?.d === h && d.id && AULA_INFO[d.id] && !aulaVista(d.id)) {
+    const f = filaAulas().find(x => x.id === d.id);
+    return f || { ...AULA_INFO[d.id], motivo: d.m || '' };
+  }
+  const v = filaAulas()[0] || null;
+  if (d?.d !== h || d.id !== v?.id) { st.aulaDia = { d: h, id: v?.id || null, m: v?.motivo || '' }; salvar(); }
+  return v;
+}
+function marcarAula(id, pulou) {
+  (st.aulas ||= {})[id] = pulou ? { d: hoje(), p: 1 } : { d: hoje() };
+  st.aulaUlt = BASE_NOME[AULA_INFO[id]?.c] ? 'base' : 'tema';
+  st.aulaFila = (st.aulaFila || []).filter(c => aulasDoTema(c).some(v => !aulaVista(v.id)));   // tema pedido e já visto sai da fila
+  salvar();
+}
+// botão "aula do tema" na correção da questão: abre direto a próxima aula não vista do tema (ou a primeira)
+function botaoAulaTema(q) {
+  const c = temaDe(q.id), l = c ? aulasDoTema(c) : [];
+  if (!l.length) return '';
+  const v = l.find(x => !aulaVista(x.id)) || l[0];
+  return `<a class="btn" href="${urlAula(v.id)}" target="_blank" rel="noopener" title="${esc(v.t)} · ${esc(v.canal)} · ${v.min} min">📺 Aula: ${esc(nomeTema(c))}</a>`;
+}
+
 // ---------------------------------------------------------------- cronograma
 // Ritmo de cada dia da semana: peso 0 = folga, 1 = dia normal. A meta de um dia é proporcional ao peso dele.
 const NIVEIS = [[0, 'Folga'], [0.5, 'Leve'], [1, 'Normal'], [1.5, 'Puxado'], [2, 'Forte']];
@@ -1165,6 +1242,28 @@ function agendaHoje(p, f) {
       extra: mais ? `<button class="btn mini" type="button" data-ag="adiantar">Adiantar mais (${Math.min(mais, st.cfg.bloco)})</button>` : '',
     });
   }
+  // videoaula do dia: antes das questões novas, de um tema cujas questões vêm a seguir (prepara para elas)
+  const nAulas = aulasPorDia();
+  if (nAulas > 0) {
+    const v = aulaDaVez(), vistas = vistasHoje();
+    if (v || vistas) {
+      const feito = vistas >= nAulas || !v;
+      const btns = v ? `${feito ? `<a class="btn mini" href="${urlAula(v.id)}" target="_blank" rel="noopener">▶ Assistir a próxima (${v.min} min)</a>` : ''}
+        <button class="btn mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>
+        ${feito ? '' : `<button class="btn fantasma mini" type="button" data-ag="aula-pular" data-id="${v.id}" title="Já sei este assunto: passa para a próxima aula">Pular esta aula</button>`}` : '';
+      itens.push({
+        id: 'aula', icone: '📺',
+        titulo: feito ? (vistas === 1 ? 'Videoaula de hoje' : `${vistas} videoaulas hoje`) : v.t,
+        detalhe: feito
+          ? `${vistas ? `${vistas} ${vistas === 1 ? 'assistida' : 'assistidas'} hoje` : 'nenhuma aula na fila'}${v ? ` · próxima (opcional): <b>${esc(v.t)}</b> — ${esc(rotuloAula(v.c))}` : ''}`
+          : `antes das questões novas · ${esc(rotuloAula(v.c))}${v.motivo ? ` (${esc(v.motivo)})` : ''} · ${esc(v.canal)}${nAulas > 1 ? ` · ${vistas + 1} de ${nAulas}` : ''}`,
+        min: feito ? 0 : v.min, feito, opcional: !feito && !!(!p.hojeEstuda || rdc.hoje || sim.hoje),   // folga, ou dia de redação/simulado (já é pesado)
+        frac: nAulas > 1 ? vistas / nAulas : undefined,
+        botao: v && !feito ? { rotulo: `▶ Assistir (${v.min} min)`, href: urlAula(v.id), fora: true } : null,
+        extra: btns + '<a class="btn fantasma mini" href="#/aulas">Todas as aulas</a>',
+      });
+    }
+  }
   if (!p.retaFinal && p.meta > 0) {
     const falta = Math.max(0, p.meta - p.novasHoje);
     itens.push({
@@ -1233,7 +1332,7 @@ function agendaHTML(p, f, itens) {
   else if (completo) cab = `✓ <b>Dia completo!</b> ${p.novasHoje > p.meta && p.meta ? `E com +${p.novasHoje - p.meta} novas além da meta. ` : ''}Daqui para frente é lucro.`;
   else cab = `${feitos} de ${obrig.length} ${obrig.length === 1 ? 'tarefa' : 'tarefas'} · faltam <b>~${fmtDur(falta)}</b>`;
   // cada tipo de tarefa tem a sua cor (como no visual novo): ícone, barra e botão
-  const COR = { novas: 'azul', rev: 'laranja', reforco: 'roxo', red: 'verde', sim: 'rosa', desafio: 'ouro' };
+  const COR = { novas: 'azul', rev: 'laranja', reforco: 'roxo', red: 'verde', sim: 'rosa', desafio: 'ouro', aula: 'verm' };
   return `<section class="card agenda">
     <div class="ag-topo">
       <div><h2>Hoje</h2><span class="ag-cab">${cab}</span></div>
@@ -1248,7 +1347,7 @@ function agendaHTML(p, f, itens) {
       </div>
       ${x.frac !== undefined && !x.feito ? `<span class="barra fina"><i style="width:${Math.round(100 * Math.min(1, x.frac))}%"></i></span>` : ''}
       <div class="ag-acoes">
-        ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ag-btn" href="${x.botao.href}">${esc(x.botao.rotulo)}</a>` : `<button class="btn ag-btn" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
+        ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ag-btn" href="${x.botao.href}"${x.botao.fora ? ' target="_blank" rel="noopener"' : ''}>${esc(x.botao.rotulo)}</a>` : `<button class="btn ag-btn" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
         ${x.extra || ''}</div>
     </li>`).join('')}</ul>
     <p class="small muted" style="margin:14px 0 0">Quer só responder questões, sem plano? Use a aba <a href="#/questoes">Questões</a> — tudo conta no cronograma do mesmo jeito.</p>
@@ -1278,6 +1377,7 @@ function telaInicio() {
     </div>
     ${cardFoco()}
     ${agendaHTML(p, f, itens)}
+    ${cardRankingCrono()}
     ${cardTrilha(p)}
     ${cardSemanaMes(p)}
     ${semanasAteProvaHTML(p)}
@@ -1307,8 +1407,11 @@ function telaInicio() {
   $app.querySelector('[data-ag=extras-cont]')?.addEventListener('click', () => retomar('extras'));
   $app.querySelector('[data-ag=ref-adiantar]')?.addEventListener('click', () => (sessaoDe('reforco') ? retomar('reforco') : iniciar(reforcosPendentes().length, 'reforco')));
   $app.querySelector('[data-ag=sim-adiar]')?.addEventListener('click', () => { (st.simAdiados ||= []).push(h); st.simAdiados = st.simAdiados.slice(-30); salvar(); rota(); });
+  $app.querySelector('[data-ag=aula-vi]')?.addEventListener('click', e => { marcarAula(e.currentTarget.dataset.id, false); rota(); });
+  $app.querySelector('[data-ag=aula-pular]')?.addEventListener('click', e => { marcarAula(e.currentTarget.dataset.id, true); rota(); });
   ligarTreinar();
   ligarTrilha();
+  ligarRankingCrono();
 }
 
 // ---------------------------------------------------------------- questões (responder livremente)
@@ -1375,6 +1478,7 @@ function cardTrilha(p) {
       <span class="barra fina"><i style="width:${Math.max(3, pct(e.feitas, e.quota))}%"></i></span>
       <span class="small muted">${e.feitas} de ${e.quota} questões${nDias ? ` · ~${dias(nDias)}` : ''}</span>
       ${e.prox ? `<span class="small muted">Depois: ${e.prox.tipo === 'revisao' ? '🔁 revisão de ' : ''}${esc(rotuloTema(e.prox.c))}</span>` : ''}
+      ${(() => { const l = aulasDoTema(e.c); return l.length ? `<a class="small" href="#/aulas/${e.c}">📺 ${l.filter(v => aulaVista(v.id)).length} de ${l.length} ${l.length === 1 ? 'aula vista' : 'aulas vistas'}</a>` : ''; })()}
       <div class="tr-acoes"><button class="btn mini" type="button" data-treinar="${e.c}" title="Bloco só deste tema (revisões dele + novas)">Treinar</button>
         <button class="btn fantasma mini" type="button" data-pular="${a}" title="Passa para o próximo tema (este volta nas revisões)">Pular</button></div>
     </li>`;
@@ -1403,6 +1507,57 @@ function ligarTrilha() {
     etapaAtual(a, contagemTemas(), true);
     rota();
   }));
+}
+
+// ---------------------------------------------------------------- aba Aulas: todas as videoaulas, por área e tema
+function telaAulas(alvo) {
+  const ct = trilhaLigada() ? contagemTemas() : null;
+  const emFoco = new Set(ct ? ORDEM_AREAS.map(a => etapaAtual(a, ct)?.c).filter(Boolean) : []);
+  const fila = filaAulas(), pedidos = new Set(st.aulaFila || []);
+  const todas = Object.keys(AULA_INFO), vistas = todas.filter(aulaVista).length;
+  const linhaVideo = v => `<li class="aula ${aulaVista(v.id) ? 'vista' : ''}">
+      <button class="aula-ok" type="button" data-aula-ok="${v.id}" title="${aulaVista(v.id) ? 'Desmarcar' : 'Marcar como assistida'}">${aulaVista(v.id) ? (st.aulas[v.id].p ? '⏭' : '✓') : ''}</button>
+      <a href="${urlAula(v.id)}" target="_blank" rel="noopener" class="cresce"><b>${esc(v.t)}</b><span class="small muted">${esc(v.canal)} · ${v.min} min${aulaVista(v.id) ? ` · ${st.aulas[v.id].p ? 'pulada' : 'vista'} em ${fmtCurto(st.aulas[v.id].d)}` : ''}</span></a>
+    </li>`;
+  const blocoTema = (c, nome, tag = '') => {
+    const l = aulasDoTema(c);
+    if (!l.length) return '';
+    const n = l.filter(v => aulaVista(v.id)).length;
+    return `<details class="aula-tema" id="aula-${c}" ${c === alvo || emFoco.has(c) ? 'open' : ''}>
+      <summary><span class="cresce"><b>${esc(nome)}</b>${tag}</span><span class="small muted">${n}/${l.length}</span></summary>
+      <ul class="aula-lista">${l.map(linhaVideo).join('')}</ul>
+      ${n < l.length ? `<button class="btn mini" type="button" data-aula-pedir="${c}">${pedidos.has(c) ? '📌 Na frente da fila — tirar' : '📌 Pôr na frente do cronograma'}</button>` : ''}
+    </details>`;
+  };
+  const areas = ORDEM_AREAS.map(a => `<section class="card">
+      <h2>${chipArea(a)}</h2>
+      ${ORDEM_TEMAS[a].map(l => `<h3 class="aula-materia">${esc(materiaDe(l[0]))}</h3>${l.map(c => blocoTema(c, nomeTema(c), emFoco.has(c) ? ' <span class="chip tag-trilha">📚 Em foco</span>' : pedidos.has(c) ? ' <span class="chip">📌 Pedido</span>' : '')).join('')}`).join('')}
+    </section>`).join('');
+  $app.innerHTML = `
+    <div class="titulo-linha"><h1>📺 Videoaulas</h1><span class="small muted">${vistas} de ${todas.length} vistas</span></div>
+    <p class="muted" style="margin-top:0">O cronograma põe ${aulasPorDia() === 1 ? 'uma aula por dia' : aulasPorDia() ? `${aulasPorDia()} aulas por dia` : 'aulas no dia (desligado em Ajustes)'} <b>antes das questões novas</b>, do tema cujas questões vêm a seguir. Aqui estão todas — dá para adiantar, marcar as que já viu ou pôr um tema na frente da fila.</p>
+    <section class="card">
+      <h2>Próximas no cronograma</h2>
+      ${fila.length ? `<ol class="aula-prox">${fila.slice(0, 6).map(v => `<li><a href="${urlAula(v.id)}" target="_blank" rel="noopener"><b>${esc(v.t)}</b></a> <span class="small muted">· ${esc(rotuloAula(v.c))} · ${v.min} min — ${esc(v.motivo)}</span></li>`).join('')}</ol>` : '<p class="muted">Nenhuma aula na fila agora.</p>'}
+    </section>
+    <section class="card">
+      <h2>🧮 Matemática básica</h2>
+      <p class="small muted" style="margin-top:0">A base das contas do ENEM (frações, potências, regra de três…). Entra no cronograma desde o começo, alternando com as aulas dos temas em foco.</p>
+      ${AULAS.base.map(b => blocoTema(b.c, b.nome, pedidos.has(b.c) ? ' <span class="chip">📌 Pedido</span>' : '')).join('')}
+    </section>
+    ${areas}`;
+  $app.querySelectorAll('[data-aula-ok]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.aulaOk;
+    if (aulaVista(id)) { delete st.aulas[id]; salvar(); } else marcarAula(id, false);
+    rota();
+  }));
+  $app.querySelectorAll('[data-aula-pedir]').forEach(b => b.addEventListener('click', () => {
+    const c = b.dataset.aulaPedir, f = st.aulaFila || [];
+    st.aulaFila = f.includes(c) ? f.filter(x => x !== c) : [...f, c];
+    st.aulaDia = null;   // a aula da vez (ainda não vista) já passa a ser a do tema pedido
+    salvar(); rota();
+  }));
+  if (alvo) document.getElementById(`aula-${alvo}`)?.scrollIntoView({ block: 'start' });
 }
 
 function cardFoco() {
@@ -1726,6 +1881,7 @@ function telaEstudar() {
         <div class="linha-btns" style="margin-top:0">
           <button class="btn" id="btn-exp">💡 Por que é ${q.resp}?</button>
           <a class="btn" href="${esc(linkVideo(q))}" target="_blank" rel="noopener">▶ Resolução no YouTube</a>
+          ${botaoAulaTema(q)}
         </div>
         <div id="exp" class="explicacao" style="margin-top:12px"></div>
         <details style="margin-top:8px"><summary class="small muted">Salvar um vídeo específico para esta questão</summary>
@@ -1788,6 +1944,7 @@ function telaEstudar() {
         <div id="dica-txt" class="explicacao"></div>
         <div class="linha-btns">
           <a class="btn" href="${esc(linkVideo(q))}" target="_blank" rel="noopener">▶ Resolução no YouTube</a>
+          ${botaoAulaTema(q)}
           <button class="btn" id="btn-ver-resp">Ver a resposta</button>
         </div>
         <p class="small muted" style="margin-bottom:0">Você ainda pode responder. Como pediu ajuda, ela vai para o caderno de erros e volta daqui a alguns dias para você refazer sozinho.</p>
@@ -1903,6 +2060,7 @@ function verQuestao(id) {
       <div class="linha-btns" style="margin-top:0">
         <button class="btn" id="btn-exp">💡 Por que é ${q.resp}?</button>
         <a class="btn" href="${esc(linkVideo(q))}" target="_blank" rel="noopener">▶ Resolução no YouTube</a>
+          ${botaoAulaTema(q)}
         ${linkProva(q) ? `<a class="btn" href="${linkProva(q)}" target="_blank" rel="noopener">📄 Prova original</a>` : ''}
       </div>
       <div id="exp" class="explicacao" style="margin-top:12px">${expUlt ? `<p>${md(expUlt)}</p>` : ''}</div>
@@ -2483,6 +2641,9 @@ function telaAjustes() {
       <label class="campo" for="bloco">Tamanho do bloco</label>
       <select id="bloco">${[5, 10, 15, 20, 30].map(n => `<option value="${n}" ${c.bloco === n ? 'selected' : ''}>${n} questões (~${n * 3} min)</option>`).join('')}</select>
       <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="red-crono" ${c.redacao !== false ? 'checked' : ''}> ✍️ Redação no cronograma</label></div>
+      <label class="campo" for="aulas-dia">📺 Videoaulas no cronograma</label>
+      <select id="aulas-dia">${[[0, 'Desligado'], [1, '1 aula por dia (antes das questões novas)'], [2, '2 aulas por dia']].map(([n, t]) => `<option value="${n}" ${aulasPorDia() === n ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <p class="small muted">A aula é do tema cujas questões vêm a seguir na trilha de focos (primeiro a 1ª aula de cada tema novo), alternando com a matemática básica. Dá para pular uma aula e ver todas na aba <a href="#/aulas">Aulas</a>.</p>
       <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="sim-crono" ${c.simCrono !== false ? 'checked' : ''}> 📝 Simulados no cronograma</label></div>
       <p class="small muted">Ligado: um simulado curto por semana (de 10 a 30 questões, crescendo com a fase), alternando um misto e um desafio numa matéria em que você tem dificuldade. Ele ocupa o lugar das questões novas do dia.</p>
       <label class="campo" for="meta-acerto">Alvo de acerto por área (“bom desempenho”)</label>
@@ -2536,6 +2697,7 @@ function telaAjustes() {
   g('red-crono').addEventListener('change', e => { c.redacao = e.target.checked; if (st.log[hoje()]) delete st.log[hoje()].m; salvar(); });
   g('sim-crono').addEventListener('change', e => { c.simCrono = e.target.checked; if (st.log[hoje()]) delete st.log[hoje()].m; salvar(); });
   g('meta-acerto').addEventListener('change', e => { c.metaAcerto = +e.target.value; salvar(); });
+  g('aulas-dia').addEventListener('change', e => { c.aulasDia = +e.target.value; salvar(); });
   const camposIA = () => {
     const k = iaAtual(), x = IAS[k];
     g('ia-campos').innerHTML = `
@@ -2637,6 +2799,11 @@ function telaLogica() {
       <p>Cada área tem <b>um tema em foco por vez</b> (ex.: Biologia › Citologia e bioquímica, Matemática › Geometria plana). Em cada área, <b>2 de cada 3 questões novas</b> vêm desse tema, de provas de vários anos; a outra vem de um tema que <b>já passou</b> pelo foco — o que você viu há mais tempo —, para ele não sumir da cabeça.</p>
       <p>A etapa de foco usa só <b>metade</b> das questões novas que faltam do tema, e as questões de tema passado nunca usam os últimos 30% de um tema. Isso fica para as <b>revisões</b>: depois de cada 3 temas, uma etapa de revisão do tema mais antigo; e, no fim do primeiro giro, um giro só de revisões, tema por tema, com tudo o que sobrou. Assim nenhum tema se esgota no começo e todos continuam aparecendo até o fim das questões novas.</p>
       <p class="small muted">As matérias de cada área se alternam (Biologia → Física → Química → Biologia…). A etapa avança quando você faz as questões dela, em qualquer lugar; dá para pular um tema no cronograma. Desliga em Ajustes.</p>
+    </section>
+    <section class="card">
+      <h2>📺 Videoaulas antes das questões</h2>
+      <p>Cada tema tem de 1 a 5 videoaulas do YouTube (links diretos, de canais como Professor Noslen, Gis com Giz, Dicasdemat, Débora Aladim, Parabólica, Samuel Cunha, Professor Boaro e Descomplica), e a <b>matemática básica</b> (frações, potências, MMC, regra de três…) tem as suas. O cronograma põe <b>uma aula por dia antes das questões novas</b>, sempre de um tema cujas questões vêm a seguir: as aulas dos temas em foco na trilha (primeiro a 1ª aula de cada tema que acabou de entrar em foco) se alternam com as de matemática básica; quando acabam, adianta o próximo tema da trilha.</p>
+      <p class="small muted">Dá para pular uma aula (já sei o assunto), ver todas na aba Aulas, pôr um tema na frente da fila (📌) e mudar para 2 aulas por dia ou desligar em Ajustes. Na correção de cada questão, o botão “📺 Aula” abre a aula do tema dela. Sem trilha de focos, vêm a matemática básica e os temas em que você mais erra.</p>
     </section>
     <section class="card">
       <h2>2. Errou? Volta até você dominar</h2>
@@ -4106,7 +4273,7 @@ async function rankingLer(liga) {
   const lista = (await fs.getDocs(q)).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.n - a.n);
   lista.forEach((x, i) => { x.pos = i && lista[i - 1].n === x.n ? lista[i - 1].pos : i + 1; });
   let fora = null;   // sua posição quando você não está entre os 50 do geral
-  if (!liga && !lista.some(x => x.id === uid)) {
+  if (!liga && st.ranking?.on && !lista.some(x => x.id === uid)) {
     const meu = placarLocal().n;
     fora = { pos: (await fs.getCountFromServer(fs.query(col, fs.where('n', '>', meu)))).data().count + 1, n: meu };
   }
@@ -4156,12 +4323,12 @@ function telaRanking(arg) {
       st.ranking = { on: true, apelido, liga };
       rkEnviado = '';
       salvar();
-      try { await rankingEnviar(); rkAba = liga ? 'liga' : 'geral'; if (location.hash === '#/ranking') rota(); else location.hash = '#/ranking'; }
+      try { await rankingEnviar(); rkAba = 'geral'; if (location.hash === '#/ranking') rota(); else location.hash = '#/ranking'; }
       catch (e) { st.ranking.on = false; salvar(); b.disabled = false; b.textContent = 'Entrar no ranking'; erro(e.code === 'auth/network-request-failed' || !navigator.onLine ? 'Sem conexão. Confira a internet e tente de novo.' : `Não deu para entrar (${e.code || e.message}).`); }
     });
     return;
   }
-  if (!rkAba || (rkAba === 'liga' && !r.liga)) rkAba = r.liga ? 'liga' : 'geral';
+  if (!rkAba || (rkAba === 'liga' && !r.liga)) rkAba = 'geral';   // a tabela principal é a geral, de todo mundo; a liga é a aba extra
   const p = placarLocal();
   $app.innerHTML = `
     <h1>Ranking</h1>
@@ -4175,8 +4342,8 @@ function telaRanking(arg) {
         <div class="stat"><b id="rk-pos">…</b><span id="rk-pos-txt">sua posição</span></div>
       </div>
       <div class="linha-btns">
-        ${r.liga ? `<button class="btn mini ${rkAba === 'liga' ? 'primario' : ''}" data-aba="liga">Liga ${esc(r.liga)}</button>` : ''}
         <button class="btn mini ${rkAba === 'geral' ? 'primario' : ''}" data-aba="geral">Geral</button>
+        ${r.liga ? `<button class="btn mini ${rkAba === 'liga' ? 'primario' : ''}" data-aba="liga">Liga ${esc(r.liga)}</button>` : ''}
       </div>
       <div class="podio" id="rk-podio"></div>
       <ul class="lista rk-lista" id="rk-lista"><li class="muted">Carregando…</li></ul>
@@ -4209,7 +4376,9 @@ function telaRanking(arg) {
   });
   (async () => {
     try { await rankingEnviar(); } catch { /* lê mesmo assim */ }
-    const { lista, uid, fora } = await rankingLer(rkAba === 'liga' ? r.liga : '');
+    const d = await rankingLer(rkAba === 'liga' ? r.liga : '');
+    if (rkAba !== 'liga') rkCache = { ...d, semana, quando: Date.now() };   // o cronograma e o trilho aproveitam
+    const { lista, uid, fora } = d;
     const ul = g('rk-lista');
     if (!ul || !ul.isConnected) return;
     const medalha = n => ['🥇', '🥈', '🥉'][n - 1] || `${n}º`;
@@ -4311,6 +4480,7 @@ function mesclarEstado(loc, rem, primeira) {
   // trilha de focos: em cada área, a etapa mais adiantada dos dois lados
   out.trilha = { ...(loc.trilha || {}) };
   for (const [a, e] of Object.entries(rem.trilha || {})) if (!out.trilha[a] || (e?.k || 0) > (out.trilha[a].k || 0)) out.trilha[a] = e;
+  out.aulas = { ...(rem.aulas || {}), ...(loc.aulas || {}) };   // videoaulas vistas: união dos dois lados
   out.mod = Math.max(loc.mod || 0, rem.mod || 0);
   return out;
 }
@@ -4581,7 +4751,7 @@ function xpTotal() {
   for (const r of Object.values(st.q)) for (const t of r.h || []) x += t[2] === 1 ? XP.acerto : XP.erro;
   return x + Object.keys(st.desafiosFeitos || {}).length * XP.desafio + (red.cont?.n || 0) * XP.redacao + (st.simulados || []).length * XP.simulado;
 }
-let rkCache = null;   // última leitura do ranking para o trilho: { quando, chave, lista, uid, fora }
+let rkCache = null;   // última leitura do ranking geral (trilho e cronograma): { quando, semana, lista, uid, fora }
 function falaDoDia(pagina, itens) {
   const obrig = itens.filter(x => !x.opcional), falta = obrig.filter(x => !x.feito).reduce((s, x) => s + x.min, 0);
   const prox = obrig.find(x => !x.feito);
@@ -4605,7 +4775,7 @@ function renderTrilho(pagina) {
   const p = plano(), itens = agendaHoje(p, diaHoje(p));
   const des = itens.find(x => x.id === 'desafio');
   const r = st.ranking;
-  const eu = rkCache && (rkCache.lista.find(x => x.id === rkCache.uid)?.pos || rkCache.fora?.pos);
+  const eu = minhaPosGeral();
   el.innerHTML = `
     <div class="tr-nums">
       <span class="tr-fogo" title="dias seguidos estudando">🔥 ${sequencia()}</span>
@@ -4618,20 +4788,55 @@ function renderTrilho(pagina) {
       <p>${esc(des.titulo.replace(/^Desafio: /, ''))}${des.feito ? ' — cumprido!' : ''}</p>
       <div class="tr-prog"><div class="barra"><i style="width:${des.feito ? 100 : Math.round(100 * Math.min(1, des.frac || 0))}%"></i></div></div>
     </section>` : ''}
-    ${FIREBASE && r?.on ? `<section class="tr-card"><div class="tr-card-topo"><b>${r.liga ? `Liga ${esc(r.liga)}` : 'Ranking da semana'}</b><a href="#/ranking">ver tudo</a></div>
+    ${FIREBASE && r?.on && pagina ? `<section class="tr-card"><div class="tr-card-topo"><b>Ranking da semana</b><a href="#/ranking">ver tudo</a></div>
       <div id="tr-liga"><p class="small muted" style="margin:6px 0 0">Carregando…</p></div></section>` : ''}`;
   if (!(FIREBASE && r?.on)) return;
-  const chave = `${r.liga || ''}|${segundaDaSemana()}`;
-  const mostrar = () => {
+  // no cronograma o ranking geral já está no meio da tela: o trilho só mostra a sua posição
+  rankingGeral().then(d => {
     const box = document.getElementById('tr-liga');
-    if (!box || !rkCache) return;
-    const top = rkCache.lista.slice(0, 5);
-    box.innerHTML = top.length ? top.map(x => `<div class="tr-linha ${x.id === rkCache.uid ? 'eu' : ''}"><b>${x.pos}</b><span class="tr-ini">${esc((x.apelido || '?')[0].toUpperCase())}</span><span class="tr-nome">${x.id === rkCache.uid ? 'Você' : esc(x.apelido)}</span><span class="tr-n">${x.n}</span></div>`).join('')
-      : '<p class="small muted" style="margin:6px 0 0">Ninguém pontuou nesta semana ainda.</p>';
-  };
-  if (rkCache && rkCache.chave === chave && Date.now() - rkCache.quando < 120000) return mostrar();
-  rankingLer(r.liga).then(d => { rkCache = { ...d, chave, quando: Date.now() }; mostrar(); const t = document.querySelector('.tr-rk'); const pos = d.lista.find(x => x.id === d.uid)?.pos || d.fora?.pos; if (t && pos) t.textContent = `🏆 #${pos}`; })
-    .catch(() => { const box = document.getElementById('tr-liga'); if (box) box.innerHTML = '<p class="small muted" style="margin:6px 0 0">Sem conexão com o ranking agora.</p>'; });
+    if (box) box.innerHTML = linhasRanking(d, 5);
+    const t = document.querySelector('.tr-rk'), pos = minhaPosGeral();
+    if (t && pos) t.textContent = `🏆 #${pos}`;
+  }).catch(() => { const box = document.getElementById('tr-liga'); if (box) box.innerHTML = '<p class="small muted" style="margin:6px 0 0">Sem conexão com o ranking agora.</p>'; });
+}
+// ranking geral da semana (todo mundo), guardado por 2 min: o trilho e o cronograma usam a mesma leitura
+function rankingGeral() {
+  const semana = segundaDaSemana();
+  if (rkCache && rkCache.semana === semana && Date.now() - rkCache.quando < 120000) return Promise.resolve(rkCache);
+  return rankingLer('').then(d => (rkCache = { ...d, semana, quando: Date.now() }));
+}
+function minhaPosGeral() {
+  if (!st.ranking?.on || !rkCache) return null;
+  return rkCache.lista.find(x => x.id === rkCache.uid)?.pos || rkCache.fora?.pos || null;
+}
+// os n primeiros do geral; se você ficou de fora, aparece embaixo com a sua posição
+function linhasRanking(d, n) {
+  const on = st.ranking?.on, top = d.lista.slice(0, n);
+  if (!top.length) return '<p class="small muted" style="margin:6px 0 0">Ninguém pontuou nesta semana ainda. Seja o primeiro!</p>';
+  const linha = (x, eu) => `<div class="tr-linha ${eu ? 'eu' : ''}"><b>${x.pos}</b><span class="tr-ini">${esc((x.apelido || '?')[0].toUpperCase())}</span><span class="tr-nome">${eu ? 'Você' : esc(x.apelido)}</span><span class="tr-n">${x.n}</span></div>`;
+  let h = top.map(x => linha(x, on && x.id === d.uid)).join('');
+  if (on && !top.some(x => x.id === d.uid)) {
+    const eu = d.lista.find(x => x.id === d.uid) || (d.fora && { pos: d.fora.pos, n: d.fora.n, apelido: st.ranking.apelido });
+    if (eu) h += `<div class="tr-sep">⋯</div>${linha(eu, true)}`;
+  }
+  return h;
+}
+// card do ranking geral no cronograma (quem ainda não entrou vê a tabela e o convite)
+function cardRankingCrono() {
+  if (!FIREBASE) return '';
+  const on = st.ranking?.on, sem = segundaDaSemana();
+  return `<section class="card">
+    <div class="titulo-linha"><h2>🏆 Ranking da semana</h2><a class="small" href="#/ranking">${on ? 'ver tudo' : 'entrar'}</a></div>
+    <p class="small muted" style="margin-top:0">Todo mundo que estuda pelo app · questões de ${fmtCurto(sem)} a ${fmtCurto(somaDias(sem, 6))} · zera na segunda</p>
+    <div class="rk-crono" id="crono-rk"><p class="small muted">Carregando…</p></div>
+    ${on ? '' : '<div class="linha-btns"><a class="btn primario" href="#/ranking">Entrar no ranking</a></div>'}
+  </section>`;
+}
+function ligarRankingCrono() {
+  if (!FIREBASE) return;
+  const box = () => document.getElementById('crono-rk');
+  rankingGeral().then(d => { const b = box(); if (b) b.innerHTML = linhasRanking(d, 10); })
+    .catch(() => { const b = box(); if (b) b.innerHTML = '<p class="small muted">Sem conexão com o ranking agora.</p>'; });
 }
 
 // ---------------------------------------------------------------- rotas
@@ -4661,6 +4866,7 @@ function rota() {
     else if (pagina === 'logica') telaLogica();
     else if (pagina === 'redacao') telaRedacao(arg);
     else if (pagina === 'questoes') telaQuestoes();
+    else if (pagina === 'aulas') telaAulas(arg);
     else if (pagina === 'ranking') telaRanking(arg);
     else if (pagina === 'ver' && BYID[arg]) verQuestao(arg);
     else telaInicio();

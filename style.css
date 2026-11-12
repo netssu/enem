@@ -835,6 +835,8 @@ html[data-tema="escuro"] .tr-xp { color: var(--ouro); }
 .tr-linha:nth-child(5n+5) .tr-ini { background: var(--roxo); }
 .tr-nome { font-size: 14px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tr-n { font-size: 13px; font-weight: 900; color: var(--muted); }
+.tr-sep { text-align: center; color: var(--muted); font-weight: 900; line-height: 1; padding: 2px 0; }
+.rk-crono { display: grid; gap: 2px; }
 
 /* ---- questão: barra de respostas embaixo (fica verde ou vermelha depois de responder) ---- */
 .q-topo .info { font-weight: 800; color: var(--muted); }
@@ -1053,3 +1055,21 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 @media (hover: hover) and (pointer: fine) {
   .questao-img { padding-bottom: 180px; }
 }
+
+/* ---------- videoaulas (aba Aulas) ---------- */
+.aula-materia { margin: 16px 0 4px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.aula-tema { border-top: 2px solid var(--soft); padding: 4px 0; }
+.aula-tema > summary { cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.aula-tema > summary .chip { margin-left: 6px; vertical-align: 1px; }
+.aula-tema > .btn { margin: 4px 0 10px; }
+.aula-lista { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.aula { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 2px solid var(--line); border-radius: 14px; min-width: 0; }
+.aula > a { display: flex; flex-direction: column; min-width: 0; text-decoration: none; color: var(--ink); }
+.aula > a b { overflow-wrap: anywhere; }
+.aula > a:hover b { color: var(--verm); }
+.aula.vista { background: var(--soft); border-color: var(--soft); }
+.aula.vista > a b { color: var(--muted); }
+.aula-ok { flex: none; width: 30px; height: 30px; border-radius: 10px; border: 2px solid var(--line2); background: var(--card); color: #fff; font: 900 16px Nunito, sans-serif; cursor: pointer; padding: 0; }
+.aula.vista .aula-ok { background: var(--verde); border-color: var(--verde); }
+.aula-prox { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+.aula-prox a { text-decoration: none; }

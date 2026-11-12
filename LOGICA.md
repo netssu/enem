@@ -111,8 +111,9 @@ Cada um dos 79 temas tem de 1 a 5 videoaulas do YouTube com **link direto** (nã
 - **No cronograma:** uma aula por dia (ou 2, ou desligado, em Ajustes › Cronograma), **antes das questões novas**, sempre de um tema cujas questões vêm a seguir — a aula prepara para as questões.
 - **Ordem da fila:** (1) temas que você pôs na frente (📌 na aba Aulas); (2) as aulas dos temas em foco na trilha — primeiro a 1ª aula de cada tema que acabou de entrar em foco — alternando uma a uma com a matemática básica; (3) as aulas do próximo tema de cada área. Sem trilha de focos (ou na reta final): matemática básica e os temas em que você mais erra.
 - A aula da vez fica a mesma o dia todo até você marcar **✓ Já assisti** ou **Pular esta aula** (já sei o assunto). Vista a do dia, a próxima aparece como opcional. Em folga, dia de redação ou de simulado, a aula é opcional.
+- **O vídeo toca dentro do site** (player do YouTube, pelo domínio youtube-nocookie): no cronograma o cartão da aula se abre na largura toda com o vídeo; na aba Aulas e na correção da questão, o player abre logo abaixo de onde você clicou. Um vídeo por vez; trocar de tela fecha. A posição fica guardada neste aparelho (`enem.aulaPos`) e o vídeo volta de onde parou. Passou de **90%** (ou chegou ao fim), a aula é **marcada como vista sozinha**. Ctrl+clique abre no YouTube. Todos os 216 vídeos permitem tocar incorporados (conferido).
 - **Aba Aulas:** todas as aulas por área › matéria › tema (o tema em foco aberto), as próximas da fila, marcar/desmarcar como vista e **📌 Pôr na frente do cronograma**. O card “Foco do momento” mostra quantas aulas do tema você já viu.
-- **Na questão:** ao lado de “Resolução no YouTube”, o botão **📺 Aula: {tema}** abre a próxima aula não vista do tema da questão.
+- **Na questão:** ao lado de “Resolução no YouTube”, o botão **📺 Aula: {tema}** toca ali mesmo a próxima aula não vista do tema da questão.
 - As aulas vistas vão para a nuvem (junção: união dos dois lados).
 
 ## 6. Onde ficam os dados

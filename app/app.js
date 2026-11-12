@@ -444,8 +444,122 @@ function botaoAulaTema(q) {
   const c = temaDe(q.id), l = c ? aulasDoTema(c) : [];
   if (!l.length) return '';
   const v = l.find(x => !aulaVista(x.id)) || l[0];
-  return `<a class="btn" href="${urlAula(v.id)}" target="_blank" rel="noopener" title="${esc(v.t)} · ${esc(v.canal)} · ${v.min} min">📺 Aula: ${esc(nomeTema(c))}</a>`;
+  return `<a class="btn" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}" title="${esc(v.t)} · ${esc(v.canal)} · ${v.min} min">📺 Aula: ${esc(nomeTema(c))}</a>`;
 }
+
+// ---- player do YouTube dentro do site: qualquer link com data-tocar="id" abre o vídeo ali mesmo, embaixo de onde foi
+// clicado (no cronograma, o cartão da aula ocupa a largura toda). Um player por vez. A posição fica guardada neste
+// aparelho (volta de onde parou) e a aula é marcada como vista sozinha quando você passa de 90% do vídeo.
+const KEY_AULA_POS = 'enem.aulaPos';
+let ytApi = null, playerAtual = null, playerSeq = 0;
+function carregarYT() {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  return (ytApi ||= new Promise((ok, erro) => {
+    const antes = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { antes?.(); ok(window.YT); };
+    const s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    s.onerror = () => { ytApi = null; erro(new Error('sem a API do YouTube')); };
+    document.head.appendChild(s);
+    setTimeout(() => { if (!window.YT?.Player) { ytApi = null; erro(new Error('a API do YouTube demorou')); } }, 15000);
+  }));
+}
+function posAula(id, seg) {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem(KEY_AULA_POS)) || {}; } catch { /* sem posição */ }
+  if (seg === undefined) return p[id] || 0;
+  p[id] = Math.floor(seg);
+  const ks = Object.keys(p);
+  if (ks.length > 60) delete p[ks[0]];   // guarda só as mais recentes
+  try { localStorage.setItem(KEY_AULA_POS, JSON.stringify(p)); } catch { /* cheio: tudo bem */ }
+}
+function fecharPlayer() {
+  if (!playerAtual) return;
+  const { yt, el, timer, host, id } = playerAtual;
+  clearInterval(timer);
+  try { const t = yt?.getCurrentTime?.(); if (t > 5) posAula(id, t); } catch { /* player já foi */ }
+  try { yt?.destroy?.(); } catch { /* idem */ }
+  el.remove();
+  host?.classList.remove('tocando');
+  playerAtual = null;
+}
+// onde o player entra: no cartão da agenda (por dentro), numa lista (logo depois do item) ou no fim do card
+function lugarDoPlayer(btn) {
+  const ag = btn.closest('.ag-item');
+  if (ag) return { host: ag, por: el => ag.appendChild(el) };
+  const li = btn.closest('li');
+  if (li) return { host: null, por: el => { const x = document.createElement('li'); x.className = 'player-li'; x.appendChild(el); li.after(x); return x; } };
+  const card = btn.closest('.card, section') || $app;
+  return { host: null, por: el => card.appendChild(el) };
+}
+function tocarAula(id, btn) {
+  const v = AULA_INFO[id];
+  if (!v) return false;
+  const jaAqui = playerAtual?.id === id;
+  fecharPlayer();
+  if (jaAqui) return true;   // clicar de novo no mesmo vídeo fecha o player
+  const el = document.createElement('div');
+  el.className = 'player-aula';
+  const alvo = `yt-${++playerSeq}`;
+  el.innerHTML = `<div class="player-topo"><div class="cresce"><b>${esc(v.t)}</b><span class="small muted">${esc(rotuloAula(v.c))} · ${esc(v.canal)} · ${v.min} min</span></div>
+      <button class="btn fantasma mini" type="button" data-player="fechar" title="Fechar o vídeo">✕</button></div>
+    <div class="player-video"><div id="${alvo}"></div></div>
+    <div class="player-acoes"><button class="btn mini" type="button" data-player="vi">${aulaVista(id) ? '✓ Vista' : '✓ Já assisti'}</button>
+      <a class="btn fantasma mini" href="${urlAula(id)}" target="_blank" rel="noopener">Abrir no YouTube</a>
+      <span class="small muted" data-player="status">${aulaVista(id) ? '' : 'marca como vista sozinha quando você passar de 90% do vídeo'}</span></div>`;
+  const { host, por } = lugarDoPlayer(btn);
+  const caixa = por(el) || el;
+  host?.classList.add('tocando');
+  const status = t => { const s = el.querySelector('[data-player="status"]'); if (s) s.textContent = t; };
+  const vista = auto => {
+    if (!aulaVista(id)) marcarAula(id, false);
+    el.querySelector('[data-player="vi"]').textContent = '✓ Vista';
+    status(auto ? 'marcada como vista' : '');
+  };
+  playerAtual = { id, el: caixa, host, yt: null, timer: 0 };
+  const eu = playerAtual;
+  el.querySelector('[data-player="fechar"]').addEventListener('click', () => { const re = aulaVista(id) && host; fecharPlayer(); if (re) rota(); });
+  el.querySelector('[data-player="vi"]').addEventListener('click', () => vista(false));
+  const inicio = posAula(id);
+  const comIframe = () => {   // sem a API (bloqueada ou offline): o vídeo toca do mesmo jeito, só não marca sozinho
+    const f = document.createElement('iframe');
+    f.src = `https://www.youtube-nocookie.com/embed/${id}?rel=0&autoplay=1${inicio > 10 ? `&start=${inicio}` : ''}`;
+    f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+    f.referrerPolicy = 'strict-origin-when-cross-origin';
+    f.allowFullscreen = true;
+    f.title = v.t;
+    document.getElementById(alvo)?.replaceWith(f);
+    status('');
+  };
+  carregarYT().then(YT => {
+    if (playerAtual !== eu || !document.getElementById(alvo)) return;
+    eu.yt = new YT.Player(alvo, {
+      videoId: id, host: 'https://www.youtube-nocookie.com',
+      playerVars: { rel: 0, autoplay: 1, playsinline: 1, start: inicio > 10 ? inicio : 0 },
+      events: {
+        onStateChange: e => {
+          if (e.data === YT.PlayerState.ENDED) { posAula(id, 0); vista(true); }
+        },
+        onError: () => status('O YouTube não deixou tocar aqui — use “Abrir no YouTube”.'),
+      },
+    });
+    eu.timer = setInterval(() => {
+      if (!document.contains(eu.el)) { if (playerAtual === eu) fecharPlayer(); else clearInterval(eu.timer); return; }   // a tela foi redesenhada (ex.: próxima questão)
+      try {
+        const t = eu.yt.getCurrentTime(), d = eu.yt.getDuration();
+        if (t > 5) posAula(id, d && t > d - 20 ? 0 : t);
+        if (d > 0 && t / d >= 0.9 && !aulaVista(id)) vista(true);
+      } catch { /* ainda carregando */ }
+    }, 5000);
+  }).catch(comIframe);
+  caixa.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  return true;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-tocar]');
+  if (!b || e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;   // ctrl+clique etc.: abre no YouTube, como link normal
+  if (tocarAula(b.dataset.tocar, b)) e.preventDefault();
+});
 
 // ---------------------------------------------------------------- cronograma
 // Ritmo de cada dia da semana: peso 0 = folga, 1 = dia normal. A meta de um dia é proporcional ao peso dele.
@@ -1248,7 +1362,7 @@ function agendaHoje(p, f) {
     const v = aulaDaVez(), vistas = vistasHoje();
     if (v || vistas) {
       const feito = vistas >= nAulas || !v;
-      const btns = v ? `${feito ? `<a class="btn mini" href="${urlAula(v.id)}" target="_blank" rel="noopener">▶ Assistir a próxima (${v.min} min)</a>` : ''}
+      const btns = v ? `${feito ? `<a class="btn mini" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir a próxima (${v.min} min)</a>` : ''}
         <button class="btn mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>
         ${feito ? '' : `<button class="btn fantasma mini" type="button" data-ag="aula-pular" data-id="${v.id}" title="Já sei este assunto: passa para a próxima aula">Pular esta aula</button>`}` : '';
       itens.push({
@@ -1259,7 +1373,7 @@ function agendaHoje(p, f) {
           : `antes das questões novas · ${esc(rotuloAula(v.c))}${v.motivo ? ` (${esc(v.motivo)})` : ''} · ${esc(v.canal)}${nAulas > 1 ? ` · ${vistas + 1} de ${nAulas}` : ''}`,
         min: feito ? 0 : v.min, feito, opcional: !feito && !!(!p.hojeEstuda || rdc.hoje || sim.hoje),   // folga, ou dia de redação/simulado (já é pesado)
         frac: nAulas > 1 ? vistas / nAulas : undefined,
-        botao: v && !feito ? { rotulo: `▶ Assistir (${v.min} min)`, href: urlAula(v.id), fora: true } : null,
+        botao: v && !feito ? { rotulo: `▶ Assistir aqui (${v.min} min)`, href: urlAula(v.id), fora: true, tocar: v.id } : null,
         extra: btns + '<a class="btn fantasma mini" href="#/aulas">Todas as aulas</a>',
       });
     }
@@ -1347,7 +1461,7 @@ function agendaHTML(p, f, itens) {
       </div>
       ${x.frac !== undefined && !x.feito ? `<span class="barra fina"><i style="width:${Math.round(100 * Math.min(1, x.frac))}%"></i></span>` : ''}
       <div class="ag-acoes">
-        ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ag-btn" href="${x.botao.href}"${x.botao.fora ? ' target="_blank" rel="noopener"' : ''}>${esc(x.botao.rotulo)}</a>` : `<button class="btn ag-btn" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
+        ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ag-btn" href="${x.botao.href}"${x.botao.fora ? ' target="_blank" rel="noopener"' : ''}${x.botao.tocar ? ` data-tocar="${x.botao.tocar}"` : ''}>${esc(x.botao.rotulo)}</a>` : `<button class="btn ag-btn" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
         ${x.extra || ''}</div>
     </li>`).join('')}</ul>
     <p class="small muted" style="margin:14px 0 0">Quer só responder questões, sem plano? Use a aba <a href="#/questoes">Questões</a> — tudo conta no cronograma do mesmo jeito.</p>
@@ -1517,7 +1631,7 @@ function telaAulas(alvo) {
   const todas = Object.keys(AULA_INFO), vistas = todas.filter(aulaVista).length;
   const linhaVideo = v => `<li class="aula ${aulaVista(v.id) ? 'vista' : ''}">
       <button class="aula-ok" type="button" data-aula-ok="${v.id}" title="${aulaVista(v.id) ? 'Desmarcar' : 'Marcar como assistida'}">${aulaVista(v.id) ? (st.aulas[v.id].p ? '⏭' : '✓') : ''}</button>
-      <a href="${urlAula(v.id)}" target="_blank" rel="noopener" class="cresce"><b>${esc(v.t)}</b><span class="small muted">${esc(v.canal)} · ${v.min} min${aulaVista(v.id) ? ` · ${st.aulas[v.id].p ? 'pulada' : 'vista'} em ${fmtCurto(st.aulas[v.id].d)}` : ''}</span></a>
+      <a href="${urlAula(v.id)}" target="_blank" rel="noopener" class="cresce" data-tocar="${v.id}"><b>${esc(v.t)}</b><span class="small muted">${esc(v.canal)} · ${v.min} min${aulaVista(v.id) ? ` · ${st.aulas[v.id].p ? 'pulada' : 'vista'} em ${fmtCurto(st.aulas[v.id].d)}` : ''}</span></a>
     </li>`;
   const blocoTema = (c, nome, tag = '') => {
     const l = aulasDoTema(c);
@@ -1538,7 +1652,7 @@ function telaAulas(alvo) {
     <p class="muted" style="margin-top:0">O cronograma põe ${aulasPorDia() === 1 ? 'uma aula por dia' : aulasPorDia() ? `${aulasPorDia()} aulas por dia` : 'aulas no dia (desligado em Ajustes)'} <b>antes das questões novas</b>, do tema cujas questões vêm a seguir. Aqui estão todas — dá para adiantar, marcar as que já viu ou pôr um tema na frente da fila.</p>
     <section class="card">
       <h2>Próximas no cronograma</h2>
-      ${fila.length ? `<ol class="aula-prox">${fila.slice(0, 6).map(v => `<li><a href="${urlAula(v.id)}" target="_blank" rel="noopener"><b>${esc(v.t)}</b></a> <span class="small muted">· ${esc(rotuloAula(v.c))} · ${v.min} min — ${esc(v.motivo)}</span></li>`).join('')}</ol>` : '<p class="muted">Nenhuma aula na fila agora.</p>'}
+      ${fila.length ? `<ol class="aula-prox">${fila.slice(0, 6).map(v => `<li><a href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}"><b>${esc(v.t)}</b></a> <span class="small muted">· ${esc(rotuloAula(v.c))} · ${v.min} min — ${esc(v.motivo)}</span></li>`).join('')}</ol>` : '<p class="muted">Nenhuma aula na fila agora.</p>'}
     </section>
     <section class="card">
       <h2>🧮 Matemática básica</h2>
@@ -2803,7 +2917,7 @@ function telaLogica() {
     <section class="card">
       <h2>📺 Videoaulas antes das questões</h2>
       <p>Cada tema tem de 1 a 5 videoaulas do YouTube (links diretos, de canais como Professor Noslen, Gis com Giz, Dicasdemat, Débora Aladim, Parabólica, Samuel Cunha, Professor Boaro e Descomplica), e a <b>matemática básica</b> (frações, potências, MMC, regra de três…) tem as suas. O cronograma põe <b>uma aula por dia antes das questões novas</b>, sempre de um tema cujas questões vêm a seguir: as aulas dos temas em foco na trilha (primeiro a 1ª aula de cada tema que acabou de entrar em foco) se alternam com as de matemática básica; quando acabam, adianta o próximo tema da trilha.</p>
-      <p class="small muted">Dá para pular uma aula (já sei o assunto), ver todas na aba Aulas, pôr um tema na frente da fila (📌) e mudar para 2 aulas por dia ou desligar em Ajustes. Na correção de cada questão, o botão “📺 Aula” abre a aula do tema dela. Sem trilha de focos, vêm a matemática básica e os temas em que você mais erra.</p>
+      <p class="small muted">Dá para pular uma aula (já sei o assunto), ver todas na aba Aulas, pôr um tema na frente da fila (📌) e mudar para 2 aulas por dia ou desligar em Ajustes. O vídeo toca dentro do próprio site (no cronograma, na aba Aulas e na correção de cada questão, pelo botão “📺 Aula”), volta de onde você parou e é marcado como visto sozinho quando você passa de 90%. Sem trilha de focos, vêm a matemática básica e os temas em que você mais erra.</p>
     </section>
     <section class="card">
       <h2>2. Errou? Volta até você dominar</h2>
@@ -4561,7 +4675,7 @@ function sincronizar() {
     syncLido = Date.now();
     syncMsg = '';
     if (chaveEnvio(st, red) !== conta.enviado) syncAgendar();
-    if (res.veio && !/^#\/(estudar|simulado)/.test(location.hash)) rota();   // mostra o que chegou do outro aparelho
+    if (res.veio && !playerAtual && !/^#\/(estudar|simulado)/.test(location.hash)) rota();   // mostra o que chegou do outro aparelho (não no meio de um vídeo)
   })().catch(e => {
     syncMsg = !navigator.onLine ? 'Sem internet — sincroniza quando voltar.' : `Não deu para sincronizar (${e.code || e.message}).`;
   }).finally(() => {
@@ -4841,6 +4955,7 @@ function ligarRankingCrono() {
 
 // ---------------------------------------------------------------- rotas
 function rota() {
+  fecharPlayer();   // trocar de tela (ou redesenhar) fecha o vídeo — a posição fica guardada
   limpar.forEach(f => f());
   limpar = [];
   if (!QUESTOES.length) {

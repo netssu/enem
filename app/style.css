@@ -1073,3 +1073,18 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 .aula.vista .aula-ok { background: var(--verde); border-color: var(--verde); }
 .aula-prox { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
 .aula-prox a { text-decoration: none; }
+
+/* ---------- player do YouTube dentro do site ---------- */
+.player-aula { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; padding: 12px; border: 2px solid var(--line); border-radius: 18px; background: var(--card); min-width: 0; }
+.player-topo { display: flex; align-items: flex-start; gap: 10px; }
+.player-topo .cresce { display: flex; flex-direction: column; min-width: 0; }
+.player-topo b { font-size: 16px; overflow-wrap: anywhere; }
+.player-video { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #000; }
+.player-video > iframe, .player-video > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.player-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.player-li { list-style: none; border: 0 !important; padding: 0 !important; display: block !important; }
+.player-li > .player-aula { margin-top: 0; }
+/* no cronograma, o cartão da aula ocupa a linha toda enquanto o vídeo toca */
+.ag-item.tocando { grid-column: 1 / -1; }
+.ag-item.tocando .ag-acoes { display: none; }   /* o player tem os próprios botões */
+.ag-item .player-aula { margin-top: 0; }

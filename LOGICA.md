@@ -104,6 +104,17 @@ Cada área tem **um tema em foco por vez** (ex.: Natureza › Biologia › Citol
 - No **Cronograma**, o card **“📚 Foco do momento”** mostra o tema de cada área, quanto falta, a estimativa em dias, o próximo tema, a trilha completa e os botões **Treinar** (bloco só do tema) e **Pular**. Nas questões aparecem as etiquetas **📚 Foco** e **↩ Tema passado**.
 - Desliga em Ajustes › Questões. Na ordem “prova por prova” a trilha não vale. Na junção com a nuvem, vale a etapa mais adiantada de cada área.
 
+### 📺 Videoaulas antes das questões
+
+Cada um dos 79 temas tem de 1 a 5 videoaulas do YouTube com **link direto** (não é busca), e a **matemática básica** tem um grupo à parte: números inteiros e expressões, MMC/MDC, frações, decimais, potências e raízes, notação científica, regra de três, equação do 1º grau, produtos notáveis e fatoração. São 216 vídeos, escolhidos entre os mais vistos de canais de ENEM (Professor Noslen, Gis com Giz, Dicasdemat, Professor Ferretto, Débora Aladim, Parabólica, Samuel Cunha, Paulo Jubilut, Professor Boaro, Gabriel Cabral, Descomplica, Brasil Escola, Toda Matéria…), em `app/data/aulas.js` (gerado por `tools/aulas.py`, que confere cada vídeo no YouTube).
+
+- **No cronograma:** uma aula por dia (ou 2, ou desligado, em Ajustes › Cronograma), **antes das questões novas**, sempre de um tema cujas questões vêm a seguir — a aula prepara para as questões.
+- **Ordem da fila:** (1) temas que você pôs na frente (📌 na aba Aulas); (2) as aulas dos temas em foco na trilha — primeiro a 1ª aula de cada tema que acabou de entrar em foco — alternando uma a uma com a matemática básica; (3) as aulas do próximo tema de cada área. Sem trilha de focos (ou na reta final): matemática básica e os temas em que você mais erra.
+- A aula da vez fica a mesma o dia todo até você marcar **✓ Já assisti** ou **Pular esta aula** (já sei o assunto). Vista a do dia, a próxima aparece como opcional. Em folga, dia de redação ou de simulado, a aula é opcional.
+- **Aba Aulas:** todas as aulas por área › matéria › tema (o tema em foco aberto), as próximas da fila, marcar/desmarcar como vista e **📌 Pôr na frente do cronograma**. O card “Foco do momento” mostra quantas aulas do tema você já viu.
+- **Na questão:** ao lado de “Resolução no YouTube”, o botão **📺 Aula: {tema}** abre a próxima aula não vista do tema da questão.
+- As aulas vistas vão para a nuvem (junção: união dos dois lados).
+
 ## 6. Onde ficam os dados
 
 Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera um `.json` de backup, que também serve para levar o progresso para outro aparelho.
@@ -116,6 +127,7 @@ Tudo no navegador (`localStorage`). Em Ajustes → **Exportar progresso** gera u
 | `app/` | O app (HTML/CSS/JS puro, sem build) |
 | `app/img/<ano>/` | Recorte de cada questão |
 | `app/data/questoes.js` | Lista de questões + gabarito |
+| `app/data/aulas.js` | Videoaulas por tema (links do YouTube) — gerado por `tools/aulas.py` |
 | `tools/extrair.py` | Gera `img/` e `questoes.js` a partir dos PDFs |
 | `tools/conferir.py` | Confere se os recortes têm a questão inteira |
 
@@ -215,7 +227,7 @@ Um por semana, no dia de estudo mais forte (empate: o mais perto do fim de seman
 
 ### Agenda de hoje
 
-Na ordem: simulado (se for o dia), redação (se for o dia), revisões vencidas, questões novas da meta e o desafio do dia (opcional). Cada item mostra o tempo que falta (3 min por questão, 1h15 por redação) e um botão. "Dia completo" quando todos os obrigatórios estão feitos.
+Na ordem: simulado (se for o dia), redação (se for o dia), revisões vencidas, a videoaula do dia, questões novas da meta, reforço dos erros e o desafio do dia (opcional). Cada item mostra o tempo que falta (3 min por questão, 1h15 por redação) e um botão. "Dia completo" quando todos os obrigatórios estão feitos.
 
 ### Quanto falta para um bom desempenho
 

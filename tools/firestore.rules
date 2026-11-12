@@ -13,6 +13,7 @@ service cloud.firestore {
     // ---- ranking da semana
     // semanas/{segunda-feira AAAA-MM-DD}/jogadores/{uid}
     //   { apelido, liga, n: questões na semana, ok: acertos, total: questões desde sempre, t: hora do servidor }
+    //   "liga" guarda o código pessoal de 6 letras (quem acompanha você procura por ele)
     // Qualquer um lê; cada um só escreve e apaga o próprio placar (com conta Google), com limites de plausibilidade.
     match /semanas/{semana}/jogadores/{uid} {
       allow read: if true;

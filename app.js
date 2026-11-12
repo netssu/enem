@@ -485,8 +485,10 @@ function fecharPlayer() {
 }
 // onde o player entra: no cartão da agenda (por dentro), numa lista (logo depois do item) ou no fim do card
 function lugarDoPlayer(btn) {
-  const ag = btn.closest('.ag-item');
-  if (ag) return { host: ag, por: el => ag.appendChild(el) };
+  const ag = btn.closest('.ag-item'), palco = document.querySelector('.ag-palco');
+  if (ag?.classList.contains('ag-aula')) return { host: ag, por: el => ag.appendChild(el) };   // aula do dia: no lugar da capa
+  if (ag && palco) return { host: null, por: el => palco.appendChild(el) };                    // outro cartão: em cima da grade
+  if (ag) return { host: null, por: el => ag.appendChild(el) };
   const li = btn.closest('li');
   if (li) return { host: null, por: el => { const x = document.createElement('li'); x.className = 'player-li'; x.appendChild(el); li.after(x); return x; } };
   const card = btn.closest('.card, section') || $app;
@@ -1369,9 +1371,10 @@ function agendaHoje(p, f) {
           <a class="aula-capa" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}" title="Assistir aqui">
             <img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="" loading="lazy"><span class="aula-play">▶</span><span class="aula-dur">${v.min} min</span></a>
           <div class="aula-info">
-            <span class="aula-sobre">📺 Aula do dia · antes das questões novas${nAulas > 1 ? ` · ${vistas + 1} de ${nAulas}` : ''}${opcional ? ' <span class="chip">opcional</span>' : ''}</span>
+            <span class="aula-sobre">📺 Aula do dia · antes das questões${nAulas > 1 ? ` · ${vistas + 1} de ${nAulas}` : ''}${opcional ? ' <span class="chip">opcional</span>' : ''}</span>
             <b class="aula-tit">${esc(v.t)}</b>
-            <span class="aula-meta">${esc(rotuloAula(v.c))} · ${esc(v.canal)}${v.motivo ? ` · <span class="aula-motivo">${esc(v.motivo)}</span>` : ''}</span>
+            <span class="aula-tema">${esc(rotuloAula(v.c))}</span>
+            <span class="aula-meta">${esc(v.canal)}${v.motivo ? ` · ${esc(v.motivo)}` : ''}</span>
             <div class="aula-botoes">
               <a class="btn ag-btn" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir aqui</a>
               <button class="btn mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>
@@ -1381,7 +1384,7 @@ function agendaHoje(p, f) {
         : `<div class="aula-hero compacta">
           <span class="ag-icone">✓</span>
           <div class="aula-info"><b>${vistas > 1 ? `${vistas} videoaulas vistas hoje` : vistas ? 'Aula de hoje vista' : 'Nenhuma aula na fila'}</b>
-            ${v ? `<span class="aula-meta">Próxima (opcional): <b>${esc(v.t)}</b> · ${esc(rotuloAula(v.c))} · ${v.min} min</span>` : ''}</div>
+            ${v ? `<span class="aula-meta">Próxima (opcional): ${esc(v.t)} · ${v.min} min</span>` : ''}</div>
           <div class="aula-botoes">${v ? `<a class="btn mini" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir</a>
             <button class="btn fantasma mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>` : ''}${todas}</div></div>`;
       itens.push({ id: 'aula', icone: '📺', titulo: v && !feito ? v.t : 'Videoaula', min: feito ? 0 : v.min, feito, opcional, html });
@@ -1390,7 +1393,10 @@ function agendaHoje(p, f) {
   if (!p.retaFinal && p.meta > 0) {
     const falta = Math.max(0, p.meta - p.novasHoje);
     itens.push({
-      id: 'novas', icone: '➕', titulo: 'Questões novas', detalhe: `${p.novasHoje} de ${p.meta}${p.novasHoje > p.meta ? ` (+${p.novasHoje - p.meta})` : ''}`,
+      id: 'novas', icone: '➕', titulo: 'Questões novas',
+      nota: `${p.novasHoje} de ${p.meta}${p.novasHoje > p.meta ? ` (+${p.novasHoje - p.meta})` : ''}`,
+      corpo: falta ? previaNovas(novasAberta ? novasAberta.itens.slice(novasAberta.i).filter(x => x.tipo === 'nova' && !feita(x.id)).map(x => BYID[x.id]).filter(Boolean)
+        : filaNovas().slice(0, falta)) : '',
       min: falta * 3, feito: falta === 0, frac: p.novasHoje / p.meta,
       botao: novasAberta ? { rotulo: `Continuar (${novasAberta.i + 1}/${novasAberta.itens.length})`, ir: () => retomar('novas') }
         : { rotulo: `Fazer as ${falta}`, ir: () => iniciar(falta, 'novas') },
@@ -1431,11 +1437,30 @@ function agendaHoje(p, f) {
   const dFeito = !!st.desafiosFeitos?.[h];
   const ac = dFeito ? null : def.acao(p, f, arg, R);
   itens.push({
-    id: 'desafio', icone: '🎯', titulo: `Desafio: ${def.titulo}`, detalhe: `${def.texto(p, arg)} <span class="muted">· ${dFeito ? 'cumprido' : esc(pr.txt)}</span>`,
+    id: 'desafio', icone: '🎯', titulo: `Desafio: ${def.titulo}`, detalhe: def.texto(p, arg), nota: dFeito ? 'cumprido ✓' : `progresso: ${esc(pr.txt)}`,
     min: 0, feito: dFeito, frac: pr.frac, opcional: true,
     botao: ac && (ac.href ? { rotulo: ac.rotulo, href: ac.href } : { rotulo: ac.rotulo, ir: ac.ir }),
   });
   return itens;
+}
+// prévia das questões novas de hoje: quantas de cada área e de qual tema (o tema em foco, se a trilha estiver ligada),
+// com a aula do tema ao lado — dá para ver a aula antes de começar
+function previaNovas(qs) {
+  if (!qs.length) return '';
+  const porArea = {};
+  for (const q of qs) (porArea[q.area] ||= []).push(q);
+  const linhas = ORDEM_AREAS.filter(a => porArea[a]).map(a => {
+    const l = porArea[a], cont = {};
+    for (const q of l) { const c = temaDe(q.id); if (c) cont[c] = (cont[c] || 0) + 1; }
+    const [top, n] = Object.entries(cont).sort((x, y) => y[1] - x[1])[0] || [];
+    const tema = top && n * 2 >= l.length ? top : null;   // um tema domina a área hoje (o foco da trilha; as outras são de temas passados)
+    const aulas = tema ? aulasDoTema(tema) : [], prox = aulas.find(v => !aulaVista(v.id));
+    const aula = !aulas.length ? '' : prox
+      ? `<a class="nq-aula" href="${urlAula(prox.id)}" target="_blank" rel="noopener" data-tocar="${prox.id}" title="Aula: ${esc(prox.t)} (${prox.min} min)">▶ aula</a>`
+      : '<span class="nq-aula vista" title="Você já viu as aulas deste tema">✓ aula</span>';
+    return `<li class="nq-linha ${a}"><span class="nq-ponto"></span><span class="nq-tema" title="${esc(AREAS[a])}">${esc(tema ? nomeTema(tema) : AREAS[a])}</span>${aula}<b class="nq-n">${l.length}</b></li>`;
+  });
+  return `<div class="nq-previa"><span class="nq-cab">O que vem agora</span><ul>${linhas.join('')}</ul></div>`;
 }
 // o que já foi feito hoje (todas as respostas, de qualquer aba)
 function resumoDia() {
@@ -1464,11 +1489,17 @@ function agendaHTML(p, f, itens) {
     ${resumoDia()}
     ${seq > 1 ? `<p class="small muted" style="margin:0 0 8px">🔥 ${seq} dias de desafio seguidos</p>` : ''}
     ${itens.filter(x => x.html).map(x => `<div class="ag-item ag-aula cor-${COR[x.id] || 'azul'} ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">${x.html}</div>`).join('')}
+    <div class="ag-palco"></div>
     <ul class="ag-lista">${itens.filter(x => !x.html).map(x => `<li class="ag-item cor-${COR[x.id] || 'azul'} ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">
       <div class="ag-cabeca">
         <span class="ag-icone">${x.feito ? '✓' : x.icone}</span>
-        <div class="ag-texto"><b>${esc(x.titulo)}</b>${x.opcional ? '<span class="chip">opcional</span>' : ''}<span class="small">${x.detalhe}${x.min && !x.feito ? ` · ~${fmtDur(x.min)}` : ''}</span></div>
+        <div class="ag-texto">
+          <div class="ag-tit"><b>${esc(x.titulo)}</b>${x.opcional ? '<span class="chip">opcional</span>' : ''}</div>
+          ${x.detalhe ? `<p class="ag-desc">${x.detalhe}</p>` : ''}
+          ${x.nota || (x.min && !x.feito) ? `<span class="ag-nota">${[x.nota, x.min && !x.feito ? `~${fmtDur(x.min)}` : ''].filter(Boolean).join(' · ')}</span>` : ''}
+        </div>
       </div>
+      ${x.corpo || ''}
       ${x.frac !== undefined && !x.feito ? `<span class="barra fina"><i style="width:${Math.round(100 * Math.min(1, x.frac))}%"></i></span>` : ''}
       <div class="ag-acoes">
         ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ag-btn" href="${x.botao.href}"${x.botao.fora ? ' target="_blank" rel="noopener"' : ''}${x.botao.tocar ? ` data-tocar="${x.botao.tocar}"` : ''}>${esc(x.botao.rotulo)}</a>` : `<button class="btn ag-btn" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
@@ -4326,8 +4357,8 @@ function seqDesafio() {
 }
 
 // ---------------------------------------------------------------- ranking (opcional, Firebase)
-// Placar da semana (questões respondidas, novas + revisões, de segunda a domingo), geral e por liga.
-// Login anônimo: sem e-mail, só um apelido. O SDK do Firebase só é baixado por quem entra no ranking.
+// Placar da semana (questões respondidas, novas + revisões, de segunda a domingo), um ranking geral só.
+// Quem tem conta entra sozinho, com um apelido; cada um tem um código e pode acompanhar o código de outros.
 // Config: Console do Firebase › Configurações do projeto › Seus apps › Web. Não é segredo — quem protege
 // os dados são as regras em tools/firestore.rules. Enquanto for null, o ranking fica escondido.
 const FIREBASE = {
@@ -4340,7 +4371,7 @@ const FIREBASE = {
 };
 const FB_VER = '10.14.1';
 const RK_ESPERA = 15000;   // no máximo uma escrita a cada 15 s (as regras recusam menos de 10 s)
-let fbP = null, rkEnviado = '', rkUltimo = 0, rkTimer = null, rkAba = null;
+let fbP = null, rkEnviado = '', rkUltimo = 0, rkTimer = null;
 
 function segundaDaSemana(d = hoje()) { return somaDias(d, -((diaSemana(d) + 6) % 7)); }
 function placarLocal() {
@@ -4376,12 +4407,13 @@ function docMeu(fb, semana) { return fb.fs.doc(fb.db, 'semanas', semana, 'jogado
 async function rankingEnviar() {
   if (!FIREBASE || !st.ranking?.on) return;
   const p = placarLocal(), r = st.ranking;
-  const chave = JSON.stringify([p, r.apelido, r.liga]);
+  const chave = JSON.stringify([p, r.apelido, meuCodigo()]);
   if (chave === rkEnviado) return;
   if (Date.now() - rkUltimo < RK_ESPERA) return rankingAgendar();
   const fb = await conectarFirebase();
   rkUltimo = Date.now();
-  await fb.fs.setDoc(docMeu(fb, p.semana), { apelido: r.apelido, liga: r.liga || '', n: p.n, ok: p.ok, total: p.total, t: fb.fs.serverTimestamp() });
+  // o campo "liga" (das ligas antigas) agora guarda o código pessoal: é por ele que os amigos acham você
+  await fb.fs.setDoc(docMeu(fb, p.semana), { apelido: r.apelido, liga: meuCodigo(fb.uid), n: p.n, ok: p.ok, total: p.total, t: fb.fs.serverTimestamp() });
   rkEnviado = chave;
 }
 function rankingAgendar() {
@@ -4389,143 +4421,180 @@ function rankingAgendar() {
   rkTimer = setTimeout(() => { rkTimer = null; rankingEnviar().catch(() => { /* sem rede: tenta no próximo salvar */ }); },
     Math.max(3000, RK_ESPERA - (Date.now() - rkUltimo)));
 }
-async function rankingLer(liga) {
+// ranking geral: os 50 primeiros, a sua posição (mesmo fora deles) e a de quem você acompanha
+async function rankingLer() {
   const fb = await conectarFirebase(), { fs, db, uid } = fb;
   const col = fs.collection(db, 'semanas', segundaDaSemana(), 'jogadores');
-  // liga: filtra por igualdade e ordena aqui (as ligas são pequenas); geral: os 50 primeiros. Nenhuma das duas pede índice composto.
-  const q = liga ? fs.query(col, fs.where('liga', '==', liga), fs.limit(300)) : fs.query(col, fs.orderBy('n', 'desc'), fs.limit(50));
-  const lista = (await fs.getDocs(q)).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.n - a.n);
+  const lista = (await fs.getDocs(fs.query(col, fs.orderBy('n', 'desc'), fs.limit(50)))).docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.n - a.n);
   lista.forEach((x, i) => { x.pos = i && lista[i - 1].n === x.n ? lista[i - 1].pos : i + 1; });
-  let fora = null;   // sua posição quando você não está entre os 50 do geral
-  if (!liga && st.ranking?.on && !lista.some(x => x.id === uid)) {
+  const posDe = async n => (await fs.getCountFromServer(fs.query(col, fs.where('n', '>', n)))).data().count + 1;
+  let fora = null;   // sua posição quando você não está entre os 50
+  if (st.ranking?.on && !lista.some(x => x.id === uid)) {
     const meu = placarLocal().n;
-    fora = { pos: (await fs.getCountFromServer(fs.query(col, fs.where('n', '>', meu)))).data().count + 1, n: meu };
+    fora = { pos: await posDe(meu), n: meu };
   }
-  return { lista, uid, fora };
+  // acompanhados: procura o código entre os 50; quem não está ali vem por igualdade no campo liga (sem índice composto)
+  const cods = (st.ranking?.seguindo || []).filter(c => c !== meuCodigo(uid)).slice(0, RK_MAX_SEGUIR);
+  const achados = new Map();
+  for (const x of lista) if (cods.includes(x.liga) && x.id !== uid) achados.set(x.liga, x);
+  const faltam = cods.filter(c => !achados.has(c));
+  if (faltam.length) {
+    const docs = (await fs.getDocs(fs.query(col, fs.where('liga', 'in', faltam)))).docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.id !== uid);
+    await Promise.all(docs.map(async x => { x.pos = await posDe(x.n); }));
+    for (const x of docs) if (!achados.has(x.liga) || achados.get(x.liga).n < x.n) achados.set(x.liga, x);
+  }
+  return { lista, uid, fora, amigos: [...achados.values()] };
 }
-function novaLiga() {
-  const L = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // sem 0/O e 1/I, para ditar o código sem confusão
-  return Array.from(crypto.getRandomValues(new Uint8Array(6)), b => L[b % L.length]).join('');
+// código pessoal: 6 letras tiradas do uid da conta Google (o mesmo em todo aparelho, sem precisar guardar)
+const COD_LETRAS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // sem 0/O e 1/I, para ditar o código sem confusão
+const RK_MAX_SEGUIR = 30;   // o "in" do Firestore aceita até 30 valores
+function meuCodigo(uid = conta?.uid) {
+  if (!uid) return '';
+  let a = 2166136261, b = 5381;
+  for (const c of String(uid)) { a = Math.imul(a ^ c.charCodeAt(0), 16777619) >>> 0; b = (Math.imul(b, 33) + c.charCodeAt(0)) >>> 0; }
+  let s = '';
+  for (let i = 0; i < 3; i++) { s += COD_LETRAS[a % 32] + COD_LETRAS[b % 32]; a = Math.floor(a / 32); b = Math.floor(b / 32); }
+  return s;
 }
-function limparLiga(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
-function linkLiga(liga) { return `${location.origin}${location.pathname}#/ranking/${liga}`; }
+function limparCodigo(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
+function linkCodigo(cod) { return `${location.origin}${location.pathname}#/ranking/${cod}`; }
+// todo mundo com conta entra sozinho no ranking geral, com um apelido gerado (dá para trocar);
+// só fica fora quem escolheu sair. As ligas antigas viraram "acompanhar códigos".
+function garantirRanking() {
+  if (!FIREBASE || !conta?.uid) return;
+  const r = st.ranking || {};
+  const novo = { on: r.on || !r.saiu, apelido: r.apelido || `Estudante ${meuCodigo()}`, seguindo: Array.isArray(r.seguindo) ? r.seguindo : [], ...(r.saiu && !r.on ? { saiu: true } : {}) };
+  if (JSON.stringify(novo) !== JSON.stringify(st.ranking)) { st.ranking = novo; salvar(); }
+}
 
 function telaRanking(arg) {
-  const r = st.ranking || {};
-  const convite = limparLiga(arg);
   if (!FIREBASE) {
     $app.innerHTML = `<h1>Ranking</h1><section class="card"><p class="muted">O ranking ainda não foi configurado neste site.</p></section>`;
     return;
   }
-  const semana = segundaDaSemana();
+  const r = st.ranking || {};
+  const convite = limparCodigo(arg), meu = meuCodigo();
+  const g = id => document.getElementById(id);
   if (!r.on) {
     $app.innerHTML = `
       <h1>Ranking</h1>
       <section class="card destaque">
-        <h2>🏆 Ranking da semana</h2>
-        <p>Quem respondeu mais questões de segunda a domingo (novas e revisões). Zera toda segunda, então dá para ganhar mesmo começando agora.</p>
-        <p class="small muted">Aparece só o seu apelido, quantas questões você fez na semana e o acerto. Não use seu nome completo. Dá para sair quando quiser.</p>
-        <label class="campo" for="rk-apelido">Apelido</label>
-        <input type="text" id="rk-apelido" maxlength="20" placeholder="ex.: estudante42" value="${esc(r.apelido || '')}" autocomplete="off">
-        <label class="campo" for="rk-liga">Código da liga (opcional)</label>
-        <input type="text" id="rk-liga" maxlength="12" placeholder="para competir só com seus amigos" value="${esc(convite || r.liga || '')}" autocomplete="off" style="text-transform:uppercase">
-        <p class="small muted">Sem liga você aparece só no ranking geral. Para criar uma, toque em “Criar liga” e mande o convite para a turma.</p>
-        <p class="small" id="rk-erro" style="color:var(--erro)" hidden></p>
-        <div class="linha-btns">
-          <button class="btn primario" id="rk-entrar">Entrar no ranking</button>
-          <button class="btn" id="rk-criar">Criar liga</button>
-        </div>
+        <h2>🏆 Você está fora do ranking</h2>
+        <p>Você escolheu não aparecer. O ranking geral mostra quem fez mais questões de segunda a domingo — só o apelido, nunca o nome ou o e-mail.</p>
+        <div class="linha-btns"><button class="btn primario" id="rk-voltar">Voltar ao ranking</button></div>
       </section>`;
-    const g = id => document.getElementById(id);
-    g('rk-criar').addEventListener('click', () => { g('rk-liga').value = novaLiga(); });
-    g('rk-entrar').addEventListener('click', async () => {
-      const apelido = g('rk-apelido').value.trim().replace(/\s+/g, ' ');
-      const liga = limparLiga(g('rk-liga').value);
-      const erro = msg => { g('rk-erro').textContent = msg; g('rk-erro').hidden = false; };
-      if (apelido.length < 2) return erro('O apelido precisa de pelo menos 2 letras.');
-      const b = g('rk-entrar'); b.disabled = true; b.textContent = 'Entrando…';
-      st.ranking = { on: true, apelido, liga };
-      rkEnviado = '';
-      salvar();
-      try { await rankingEnviar(); rkAba = 'geral'; if (location.hash === '#/ranking') rota(); else location.hash = '#/ranking'; }
-      catch (e) { st.ranking.on = false; salvar(); b.disabled = false; b.textContent = 'Entrar no ranking'; erro(e.code === 'auth/network-request-failed' || !navigator.onLine ? 'Sem conexão. Confira a internet e tente de novo.' : `Não deu para entrar (${e.code || e.message}).`); }
-    });
+    g('rk-voltar').addEventListener('click', () => { st.ranking = { ...r, on: true }; delete st.ranking.saiu; rkEnviado = ''; rkCache = null; salvar(); telaRanking(arg); });
     return;
   }
-  if (!rkAba || (rkAba === 'liga' && !r.liga)) rkAba = 'geral';   // a tabela principal é a geral, de todo mundo; a liga é a aba extra
-  const p = placarLocal();
+  const seg = r.seguindo ||= [];
+  const semana = segundaDaSemana(), p = placarLocal();
+  const podeConvite = convite && convite !== meu && !seg.includes(convite);
   $app.innerHTML = `
     <h1>Ranking</h1>
-    ${convite && convite !== r.liga ? `<section class="card destaque"><h2>Convite para a liga ${esc(convite)}</h2>
-      <p class="small muted">${r.liga ? `Você está na liga ${esc(r.liga)}. Dá para estar em uma liga por vez.` : 'Você continua no ranking geral também.'}</p>
-      <div class="linha-btns"><button class="btn primario" id="rk-aceitar">Entrar na liga ${esc(convite)}</button><a class="btn" href="#/ranking">Agora não</a></div></section>` : ''}
+    ${podeConvite ? `<section class="card destaque"><h2>Acompanhar o código ${esc(convite)}?</h2>
+      <p class="small muted">A pessoa aparece em destaque na sua tabela — se não estiver entre os primeiros, no fim, com a posição dela. Para ela acompanhar você também, mande o seu código: <b>${meu}</b>.</p>
+      <div class="linha-btns"><button class="btn primario" id="rk-aceitar">Acompanhar ${esc(convite)}</button><a class="btn" href="#/ranking">Agora não</a></div></section>` : ''}
     <section class="card">
       <div class="titulo-linha"><h2>Semana de ${fmtCurto(semana)} a ${fmtCurto(somaDias(semana, 6))}</h2><span class="small muted">zera na segunda</span></div>
       <div class="grid2">
         <div class="stat"><b>${p.n}</b><span>questões suas nesta semana</span></div>
-        <div class="stat"><b id="rk-pos">…</b><span id="rk-pos-txt">sua posição</span></div>
-      </div>
-      <div class="linha-btns">
-        <button class="btn mini ${rkAba === 'geral' ? 'primario' : ''}" data-aba="geral">Geral</button>
-        ${r.liga ? `<button class="btn mini ${rkAba === 'liga' ? 'primario' : ''}" data-aba="liga">Liga ${esc(r.liga)}</button>` : ''}
+        <div class="stat"><b id="rk-pos">…</b><span>sua posição no ranking geral</span></div>
       </div>
       <div class="podio" id="rk-podio"></div>
       <ul class="lista rk-lista" id="rk-lista"><li class="muted">Carregando…</li></ul>
     </section>
     <section class="card">
+      <h2>⭐ Acompanhar amigos</h2>
+      <p class="small muted" style="margin-top:0">Coloque o código de alguém e a pessoa aparece em destaque na tabela — mesmo fora dos primeiros, no fim, com a posição dela (como a sua). Para os dois se acompanharem, é só trocar os códigos.</p>
+      <div class="rk-codigo"><span class="small muted">Seu código</span><b>${meu}</b><button class="btn mini" id="rk-copiar">Copiar convite</button></div>
+      <p class="small muted" id="rk-copiado" hidden>Convite copiado — é só mandar.</p>
+      <label class="campo" for="rk-cod">Código de alguém</label>
+      <div class="rk-add"><input type="text" id="rk-cod" maxlength="12" placeholder="ex.: K7P2QX" autocomplete="off" style="text-transform:uppercase"><button class="btn primario" id="rk-add">Acompanhar</button></div>
+      <p class="small" id="rk-erro" style="color:var(--erro)" hidden></p>
+      ${seg.length ? `<ul class="lista rk-seguindo">${seg.map(c => `<li><div class="rk-nome"><span class="rk-cod">${esc(c)}</span><span class="tit small" data-cod="${esc(c)}">…</span></div><button class="btn mini" data-tirar="${esc(c)}">Parar</button></li>`).join('')}</ul>` : ''}
+    </section>
+    <section class="card">
       <h2>Você no ranking</h2>
-      <p class="small muted">Apelido <b>${esc(r.apelido)}</b>${r.liga ? ` · liga <b>${esc(r.liga)}</b>` : ' · sem liga'}. O placar é enviado sozinho enquanto você estuda.</p>
-      <div class="linha-btns">
-        ${r.liga ? '<button class="btn" id="rk-convite">Copiar convite da liga</button>' : ''}
-        <button class="btn" id="rk-mudar">Mudar apelido ou liga</button>
-        <button class="btn perigo" id="rk-sair">Sair do ranking</button>
-      </div>
-      <p class="small muted" id="rk-copiado" hidden>Convite copiado — mande para a turma.</p>
+      <p class="small muted" style="margin-top:0">Todo mundo com conta aparece no ranking geral, só com o apelido — nunca o seu nome ou e-mail. O placar é enviado sozinho enquanto você estuda.</p>
+      <label class="campo" for="rk-apelido">Apelido</label>
+      <div class="rk-add"><input type="text" id="rk-apelido" maxlength="20" value="${esc(r.apelido || '')}" autocomplete="off"><button class="btn" id="rk-salvar">Salvar</button></div>
+      <p class="small" id="rk-erro-ap" style="color:var(--erro)" hidden></p>
+      <div class="linha-btns"><button class="btn perigo mini" id="rk-sair">Não aparecer no ranking</button></div>
     </section>`;
-  const g = id => document.getElementById(id);
-  g('rk-aceitar')?.addEventListener('click', () => { r.liga = convite; rkAba = 'liga'; salvar(); location.hash = '#/ranking'; });
-  document.querySelectorAll('[data-aba]').forEach(b => b.addEventListener('click', () => { rkAba = b.dataset.aba; telaRanking(arg); }));
-  g('rk-convite')?.addEventListener('click', async () => {
-    const txt = `Entra na minha liga do ENEM Azul: ${linkLiga(r.liga)}`;
+  const recarregar = () => { rkCache = null; telaRanking(); };
+  g('rk-aceitar')?.addEventListener('click', () => { seg.push(convite); salvar(); rkCache = null; location.hash = '#/ranking'; });
+  g('rk-copiar').addEventListener('click', async () => {
+    const txt = `Me acompanha no ranking do ENEM Azul — meu código é ${meu}: ${linkCodigo(meu)}`;
     try { await navigator.clipboard.writeText(txt); g('rk-copiado').hidden = false; } catch { prompt('Copie o convite:', txt); }
   });
-  g('rk-mudar').addEventListener('click', () => { r.on = false; salvar(); telaRanking(arg); });
+  const adicionar = () => {
+    const c = limparCodigo(g('rk-cod').value);
+    const erro = msg => { g('rk-erro').textContent = msg; g('rk-erro').hidden = false; };
+    if (c.length < 4) return erro('Digite o código (6 letras e números).');
+    if (c === meu) return erro('Esse é o seu código — mande para quem quiser acompanhar você.');
+    if (seg.includes(c)) return erro('Você já acompanha esse código.');
+    if (seg.length >= RK_MAX_SEGUIR) return erro(`Dá para acompanhar até ${RK_MAX_SEGUIR} pessoas.`);
+    seg.push(c); salvar(); recarregar();
+  };
+  g('rk-add').addEventListener('click', adicionar);
+  g('rk-cod').addEventListener('keydown', e => { if (e.key === 'Enter') adicionar(); });
+  document.querySelectorAll('[data-tirar]').forEach(b => b.addEventListener('click', () => {
+    r.seguindo = seg.filter(c => c !== b.dataset.tirar); salvar(); recarregar();
+  }));
+  g('rk-salvar').addEventListener('click', () => {
+    const ap = g('rk-apelido').value.trim().replace(/\s+/g, ' ');
+    if (ap.length < 2) { g('rk-erro-ap').textContent = 'O apelido precisa de pelo menos 2 letras.'; g('rk-erro-ap').hidden = false; return; }
+    r.apelido = ap; salvar(); recarregar();
+  });
   g('rk-sair').addEventListener('click', async () => {
-    if (!confirm('Sair do ranking? Seu placar desta semana é apagado do ranking (o seu progresso no app continua).')) return;
+    if (!confirm('Sair do ranking? Seu placar desta semana é apagado do ranking e você para de aparecer (o seu progresso no app continua).')) return;
     try { const fb = await conectarFirebase(); await fb.fs.deleteDoc(docMeu(fb, semana)); } catch { /* sem rede: o placar some na segunda */ }
-    st.ranking = { on: false, apelido: r.apelido, liga: '' };
-    rkEnviado = '';
+    st.ranking = { ...r, on: false, saiu: true };
+    rkEnviado = ''; rkCache = null;
     salvar();
     telaRanking();
   });
   (async () => {
     try { await rankingEnviar(); } catch { /* lê mesmo assim */ }
-    const d = await rankingLer(rkAba === 'liga' ? r.liga : '');
-    if (rkAba !== 'liga') rkCache = { ...d, semana, quando: Date.now() };   // o cronograma e o trilho aproveitam
-    const { lista, uid, fora } = d;
+    const d = await rankingLer();
+    rkCache = { ...d, semana, quando: Date.now() };   // o cronograma e o trilho aproveitam
+    const { lista, uid, fora, amigos } = d;
     const ul = g('rk-lista');
     if (!ul || !ul.isConnected) return;
+    const amigo = new Set(amigos.map(x => x.id));
     const medalha = n => ['🥇', '🥈', '🥉'][n - 1] || `${n}º`;
     const CORES = ['azul', 'rosa', 'verde', 'laranja', 'roxo'];
     const corDe = x => CORES[[...String(x.apelido || '')].reduce((s, c) => s + c.charCodeAt(0), 0) % CORES.length];
     const ini = x => esc((x.apelido || '?')[0].toUpperCase());
+    const nome = x => `${esc(x.apelido)}${x.id === uid ? ' (você)' : amigo.has(x.id) ? ' ⭐' : ''}`;
+    const cls = x => x.id === uid ? 'rk-eu' : amigo.has(x.id) ? 'rk-amigo' : '';
+    const item = x => `<li class="${cls(x)}">
+        <div class="rk-nome"><span class="rk-pos">${x.pos}</span><span class="rk-ini cor-${corDe(x)}">${ini(x)}</span><span class="tit">${nome(x)}</span></div>
+        <div class="rk-dir"><b class="rk-n">${x.n}</b><span class="small muted">${x.n ? `${pct(x.ok, x.n)}%` : ''}</span></div></li>`;
     // pódio: os 3 primeiros (2º, 1º, 3º, como num pódio de verdade); a lista segue do 4º
     const top = lista.slice(0, 3);
     const podio = g('rk-podio');
-    if (podio) podio.innerHTML = top.length ? [top[1], top[0], top[2]].filter(Boolean).map(x => `<div class="podio-lugar cor-${corDe(x)} ${x.id === uid ? 'eu' : ''}">
+    if (podio) podio.innerHTML = top.length ? [top[1], top[0], top[2]].filter(Boolean).map(x => `<div class="podio-lugar cor-${corDe(x)} ${x.id === uid ? 'eu' : amigo.has(x.id) ? 'amigo' : ''}">
         <span class="podio-medalha">${medalha(x.pos)}</span><span class="podio-ini">${ini(x)}</span>
-        <b>${esc(x.apelido)}${x.id === uid ? ' (você)' : ''}</b>
+        <b>${nome(x)}</b>
         <div class="podio-degrau" style="height:${[130, 96, 72][Math.min(2, x.pos - 1)]}px">${x.n}</div></div>`).join('') : '';
+    // no fim: você e quem você acompanha, se ficaram fora dos 50
+    const fim = [];
+    if (fora) fim.push({ id: uid, apelido: r.apelido, pos: fora.pos, n: fora.n, ok: Math.min(p.ok, fora.n) });
+    for (const a of amigos) if (!lista.some(x => x.id === a.id)) fim.push(a);
+    fim.sort((a, b) => a.pos - b.pos);
     const resto = lista.slice(3);
-    ul.hidden = !resto.length && top.length > 0;
-    ul.innerHTML = resto.length ? resto.map(x => `<li class="${x.id === uid ? 'rk-eu' : ''}">
-        <div class="rk-nome"><span class="rk-pos">${x.pos}</span><span class="rk-ini cor-${corDe(x)}">${ini(x)}</span><span class="tit">${esc(x.apelido)}${x.id === uid ? ' (você)' : ''}</span></div>
-        <div class="rk-dir"><b class="rk-n">${x.n}</b><span class="small muted">${x.n ? `${pct(x.ok, x.n)}%` : ''}</span></div></li>`).join('')
+    ul.hidden = !resto.length && !fim.length && top.length > 0;
+    ul.innerHTML = resto.length || fim.length ? resto.map(item).join('') + (fim.length ? `<li class="rk-sep">⋯</li>${fim.map(item).join('')}` : '')
       : top.length ? '' : '<li class="muted">Ninguém fez questões nesta semana ainda. Seja o primeiro!</li>';
     const eu = lista.find(x => x.id === uid);
-    const pos = eu ? eu.pos : fora?.pos;
-    g('rk-pos').textContent = pos ? `${pos}º` : '—';
-    g('rk-pos-txt').textContent = rkAba === 'liga' ? `na liga, de ${lista.length}` : 'no ranking geral';
+    g('rk-pos').textContent = eu ? `${eu.pos}º` : fora ? `${fora.pos}º` : '—';
+    // na lista de acompanhados: o apelido e a posição de cada código
+    document.querySelectorAll('[data-cod]').forEach(s => {
+      const a = amigos.find(x => x.liga === s.dataset.cod);
+      s.textContent = a ? `${a.apelido} · ${a.pos}º com ${a.n} questões` : 'ainda sem questões nesta semana (ou código errado)';
+      s.classList.toggle('muted', !a);
+    });
   })().catch(e => {
     const ul = g('rk-lista');
     if (!ul?.isConnected) return;
@@ -4787,7 +4856,7 @@ function telaEntrar() {
           <h1>Todas as questões do ENEM. Um plano que se ajusta a você.</h1>
           <p>${milhar(POOL().length)} questões das provas azuis de 2010 a 2025. Errou? Ela volta no caderno de erros até você dominar.</p>
         </div>
-        <div class="entrar-tags"><span>📅 Cronograma diário</span><span>✍️ Redação corrigida</span><span>🏆 Liga com amigos</span></div>
+        <div class="entrar-tags"><span>📅 Cronograma diário</span><span>✍️ Redação corrigida</span><span>🏆 Ranking com amigos</span></div>
       </div>
       <div class="entrar-lado"><div class="entrar-caixa">
         <h2>${temProgresso ? 'Bem-vindo de volta!' : 'Bora começar?'}</h2>
@@ -4795,7 +4864,7 @@ function telaEntrar() {
         <button class="btn entrar-google" id="entrar-google"><b aria-hidden="true">G</b>Continuar com Google</button>
         ${temProgresso ? '<button class="btn fantasma" id="entrar-backup" type="button">⬇ Baixar uma cópia do meu progresso antes</button>' : ''}
         <p class="small" id="entrar-erro" style="color:var(--erro);margin:0" hidden></p>
-        <p class="small muted" style="margin:0">Com a conta, o progresso fica salvo na nuvem e abre igual no celular e no computador. No ranking aparece só o apelido que você escolher — nunca o seu nome ou e-mail. As chaves de API das IAs ficam só no seu aparelho.</p>
+        <p class="small muted" style="margin:0">Com a conta, o progresso fica salvo na nuvem e abre igual no celular e no computador. No ranking da semana você aparece só com um apelido (dá para trocar ou sair) — nunca o seu nome ou e-mail. As chaves de API das IAs ficam só no seu aparelho.</p>
       </div></div>
     </div>`;
   carregarFirebase().catch(() => { /* sem rede: o botão tenta de novo */ });   // o popup do Google abre direto no clique
@@ -4927,33 +4996,38 @@ function renderTrilho(pagina) {
 function rankingGeral() {
   const semana = segundaDaSemana();
   if (rkCache && rkCache.semana === semana && Date.now() - rkCache.quando < 120000) return Promise.resolve(rkCache);
-  return rankingLer('').then(d => (rkCache = { ...d, semana, quando: Date.now() }));
+  return rankingLer().then(d => (rkCache = { ...d, semana, quando: Date.now() }));
 }
 function minhaPosGeral() {
   if (!st.ranking?.on || !rkCache) return null;
   return rkCache.lista.find(x => x.id === rkCache.uid)?.pos || rkCache.fora?.pos || null;
 }
-// os n primeiros do geral; se você ficou de fora, aparece embaixo com a sua posição
+// os n primeiros do geral, com você e quem você acompanha (⭐) em destaque;
+// quem ficou de fora dos n aparece no fim, com a posição
 function linhasRanking(d, n) {
-  const on = st.ranking?.on, top = d.lista.slice(0, n);
-  if (!top.length) return '<p class="small muted" style="margin:6px 0 0">Ninguém pontuou nesta semana ainda. Seja o primeiro!</p>';
-  const linha = (x, eu) => `<div class="tr-linha ${eu ? 'eu' : ''}"><b>${x.pos}</b><span class="tr-ini">${esc((x.apelido || '?')[0].toUpperCase())}</span><span class="tr-nome">${eu ? 'Você' : esc(x.apelido)}</span><span class="tr-n">${x.n}</span></div>`;
-  let h = top.map(x => linha(x, on && x.id === d.uid)).join('');
+  const on = st.ranking?.on, top = d.lista.slice(0, n), amigos = d.amigos || [];
+  const amigo = new Set(amigos.map(x => x.id));
+  const tipo = x => on && x.id === d.uid ? 'eu' : amigo.has(x.id) ? 'amigo' : '';
+  const linha = x => `<div class="tr-linha ${tipo(x)}"><b>${x.pos}</b><span class="tr-ini">${esc((x.apelido || '?')[0].toUpperCase())}</span><span class="tr-nome">${tipo(x) === 'eu' ? 'Você' : `${esc(x.apelido)}${tipo(x) ? ' ⭐' : ''}`}</span><span class="tr-n">${x.n}</span></div>`;
+  const fim = [];
   if (on && !top.some(x => x.id === d.uid)) {
-    const eu = d.lista.find(x => x.id === d.uid) || (d.fora && { pos: d.fora.pos, n: d.fora.n, apelido: st.ranking.apelido });
-    if (eu) h += `<div class="tr-sep">⋯</div>${linha(eu, true)}`;
+    const eu = d.lista.find(x => x.id === d.uid) || (d.fora && { id: d.uid, pos: d.fora.pos, n: d.fora.n, apelido: st.ranking.apelido });
+    if (eu) fim.push(eu);
   }
-  return h;
+  for (const a of amigos) if (!top.some(x => x.id === a.id)) fim.push(a);
+  fim.sort((a, b) => a.pos - b.pos);
+  if (!top.length && !fim.length) return '<p class="small muted" style="margin:6px 0 0">Ninguém pontuou nesta semana ainda. Seja o primeiro!</p>';
+  return top.map(linha).join('') + (fim.length ? `<div class="tr-sep">⋯</div>${fim.map(linha).join('')}` : '');
 }
-// card do ranking geral no cronograma (quem ainda não entrou vê a tabela e o convite)
+// card do ranking geral no cronograma (todo mundo entra sozinho; só fica fora quem escolheu sair)
 function cardRankingCrono() {
   if (!FIREBASE) return '';
   const on = st.ranking?.on, sem = segundaDaSemana();
   return `<section class="card">
-    <div class="titulo-linha"><h2>🏆 Ranking da semana</h2><a class="small" href="#/ranking">${on ? 'ver tudo' : 'entrar'}</a></div>
-    <p class="small muted" style="margin-top:0">Todo mundo que estuda pelo app · questões de ${fmtCurto(sem)} a ${fmtCurto(somaDias(sem, 6))} · zera na segunda</p>
+    <div class="titulo-linha"><h2>🏆 Ranking da semana</h2><a class="small" href="#/ranking">ver tudo</a></div>
+    <p class="small muted" style="margin-top:0">Todo mundo que estuda pelo app · questões de ${fmtCurto(sem)} a ${fmtCurto(somaDias(sem, 6))} · zera na segunda${on ? ` · seu código: <b>${meuCodigo()}</b>` : ''}</p>
     <div class="rk-crono" id="crono-rk"><p class="small muted">Carregando…</p></div>
-    ${on ? '' : '<div class="linha-btns"><a class="btn primario" href="#/ranking">Entrar no ranking</a></div>'}
+    ${on ? '' : '<p class="small muted">Você escolheu não aparecer no ranking. <a href="#/ranking">Voltar</a></p>'}
   </section>`;
 }
 function ligarRankingCrono() {
@@ -4975,6 +5049,7 @@ function rota() {
   const semConta = !!FIREBASE && !conta;
   document.body.classList.toggle('sem-conta', semConta);
   if (semConta) { telaEntrar(); return; }
+  garantirRanking();   // com conta: já está no ranking geral, sem precisar entrar
   const [, pagina = '', arg] = location.hash.split('/');
   const emProva = pagina === 'simulado' && st.simulado && !st.simulado.fim;
   $app.classList.toggle('larga', pagina === 'estudar' || pagina === 'ver' || emProva);

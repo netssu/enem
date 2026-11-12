@@ -228,7 +228,7 @@ Um por semana, no dia de estudo mais forte (empate: o mais perto do fim de seman
 
 ### Agenda de hoje
 
-Na ordem: simulado (se for o dia), redação (se for o dia), revisões vencidas, a videoaula do dia, questões novas da meta, reforço dos erros e o desafio do dia (opcional). Cada item mostra o tempo que falta (3 min por questão, 1h15 por redação) e um botão. "Dia completo" quando todos os obrigatórios estão feitos.
+Na ordem: simulado (se for o dia), redação (se for o dia), revisões vencidas, a videoaula do dia, questões novas da meta, reforço dos erros e o desafio do dia (opcional). Cada item mostra o tempo que falta (3 min por questão, 1h15 por redação) e um botão. O cartão de **questões novas** mostra “O que vem agora”: quantas questões de cada área e de qual tema (o tema em foco da trilha), com um botão **▶ aula** para ver a aula daquele tema antes de começar (ou ✓ se você já viu). Cada cartão separa título, descrição e progresso. "Dia completo" quando todos os obrigatórios estão feitos.
 
 ### Quanto falta para um bom desempenho
 

@@ -593,7 +593,7 @@ mark.m.sel, mark.m:focus-visible { outline: 2px solid var(--text); outline-offse
 .rk-n { color: var(--text); font-size: 16px; }
 .rk-lista li.rk-eu { background: var(--azul-claro); border-radius: 10px; }
 .rk-lista li.rk-eu .tit { color: var(--azul); }
-#rk-liga::placeholder { text-transform: none; }
+#rk-cod::placeholder { text-transform: none; }
 
 /* números grandes (Progresso) */
 .ng { text-align: center; }
@@ -835,6 +835,8 @@ html[data-tema="escuro"] .tr-xp { color: var(--ouro); }
 .tr-linha:nth-child(5n+5) .tr-ini { background: var(--roxo); }
 .tr-nome { font-size: 14px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tr-n { font-size: 13px; font-weight: 900; color: var(--muted); }
+.tr-linha.amigo { background: var(--ouro-cl); }
+.tr-linha.amigo .tr-nome { color: var(--ouro-esc); }
 .tr-sep { text-align: center; color: var(--muted); font-weight: 900; line-height: 1; padding: 2px 0; }
 .rk-crono { display: grid; gap: 2px; }
 
@@ -965,6 +967,17 @@ html[data-tema="escuro"] .fim-bloco h1 { color: var(--ouro); }
 .rk-nome { gap: 12px; }
 .rk-pos { min-width: 1.6em; color: var(--muted); }
 .rk-dir { display: flex; align-items: baseline; gap: 12px; }
+.rk-lista li.rk-amigo { background: var(--ouro-cl); border-color: var(--ouro); }
+.rk-lista li.rk-sep { display: block; text-align: center; color: var(--muted); font-weight: 900; padding: 2px 0; }
+.podio-lugar.amigo > b { color: var(--ouro-esc); }
+/* seu código e acompanhar códigos */
+.rk-codigo { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 12px 14px; border: 2px dashed var(--line); border-radius: 16px; }
+.rk-codigo b { font: 800 24px var(--titulo); letter-spacing: 3px; color: var(--azul); }
+.rk-add { display: flex; gap: 8px; }
+.rk-add input { flex: 1; min-width: 0; }
+.rk-seguindo { margin-top: 12px; }
+.rk-seguindo li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px; }
+.rk-cod { font: 800 15px var(--titulo); letter-spacing: 2px; }
 
 /* ---- cronograma: semana em linhas e mês ---- */
 .vista-topo { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
@@ -1100,7 +1113,7 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 .aula-sobre .chip { margin-left: 4px; vertical-align: 1px; }
 .aula-tit { font: 800 20px/1.2 var(--titulo); overflow-wrap: anywhere; }
 .aula-meta { font-size: 13px; font-weight: 700; color: var(--muted); }
-.aula-motivo { color: var(--ink); }
+.aula-tema { font-size: 14px; font-weight: 800; color: var(--ink); opacity: .85; }
 .aula-botoes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 .aula-botoes .ag-btn { width: auto; padding-left: 22px; padding-right: 22px; }
 .aula-todas { margin-left: auto; font-weight: 800; text-decoration: none; }
@@ -1116,3 +1129,35 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
   .aula-hero.compacta { flex-direction: row; flex-wrap: wrap; align-items: center; }
   .aula-hero.compacta .aula-botoes { width: 100%; }
 }
+
+/* ---------- cartões do "Hoje": título | descrição | progresso e tempo (antes o negrito do meio do texto herdava o
+   tamanho do título e embaralhava a leitura) ---------- */
+.ag-item { align-items: stretch; }   /* uma regra antiga centralizava o conteúdo dos cartões */
+.ag-item > .barra.fina { flex: none; height: 6px; }   /* a barra não estica na altura */
+.ag-item .ag-texto { gap: 4px; }
+.ag-tit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.ag-item .ag-texto .ag-tit b { font-size: 16px; font-weight: 900; line-height: 1.25; }
+.ag-item .ag-texto .ag-tit .chip { align-self: center; }
+.ag-desc { margin: 0; font-size: 13.5px; font-weight: 600; line-height: 1.45; color: var(--muted); }
+.ag-desc::first-letter { text-transform: uppercase; }
+.ag-item .ag-texto .ag-desc b { font-size: inherit; font-weight: 800; line-height: inherit; color: var(--ink); text-decoration: none; }
+.ag-nota { font-size: 12.5px; font-weight: 800; color: var(--muted); }
+.ag-item.feito .ag-texto .ag-tit b { text-decoration: none; color: var(--c); }
+.ag-item.feito .ag-texto .ag-desc b { color: inherit; }
+.ag-palco:empty { display: none; }
+.ag-palco { margin-bottom: 14px; }
+.ag-palco > .player-aula { margin-top: 0; }
+
+/* prévia das questões novas: quantas de cada área e de qual tema, com a aula do tema */
+.nq-previa { min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 14px; background: var(--soft); }
+.nq-cab { font: 900 11px Nunito, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.nq-previa ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.nq-linha { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13.5px; font-weight: 700; }
+.nq-ponto { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--azul); }
+.nq-linha.LC .nq-ponto { background: var(--lc); } .nq-linha.CH .nq-ponto { background: var(--ch); }
+.nq-linha.CN .nq-ponto { background: var(--cn); } .nq-linha.MT .nq-ponto { background: var(--mt); }
+.nq-tema { flex: 1; min-width: 0; line-height: 1.25; overflow-wrap: anywhere; }
+.nq-tema .muted { font-weight: 600; }
+.nq-aula { flex: none; font-size: 11.5px; font-weight: 900; padding: 1px 7px; border-radius: 99px; background: var(--verm-cl); color: var(--verm); text-decoration: none; }
+.nq-aula.vista { background: transparent; color: var(--muted); }
+.nq-n { flex: none; min-width: 22px; text-align: right; font: 800 15px var(--titulo); }

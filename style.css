@@ -1134,6 +1134,8 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
    tamanho do título e embaralhava a leitura) ---------- */
 .ag-item { align-items: stretch; }   /* uma regra antiga centralizava o conteúdo dos cartões */
 .ag-item > .barra.fina { flex: none; height: 6px; }   /* a barra não estica na altura */
+.ag-lista { align-items: start; }   /* cada cartão com a altura do próprio conteúdo (sem espaço vago) */
+.ag-item .ag-acoes { margin-top: 4px; }
 .ag-item .ag-texto { gap: 4px; }
 .ag-tit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .ag-item .ag-texto .ag-tit b { font-size: 16px; font-weight: 900; line-height: 1.25; }
@@ -1161,3 +1163,5 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 .nq-aula { flex: none; font-size: 11.5px; font-weight: 900; padding: 1px 7px; border-radius: 99px; background: var(--verm-cl); color: var(--verm); text-decoration: none; }
 .nq-aula.vista { background: transparent; color: var(--muted); }
 .nq-n { flex: none; min-width: 22px; text-align: right; font: 800 15px var(--titulo); }
+.ag-aula.feito .aula-capa { opacity: .9; }
+.ag-aula.feito .aula-tit { color: var(--ink); }

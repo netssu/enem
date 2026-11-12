@@ -434,9 +434,27 @@ function aulaDaVez() {
   return v;
 }
 function marcarAula(id, pulou) {
-  (st.aulas ||= {})[id] = pulou ? { d: hoje(), p: 1 } : { d: hoje() };
+  (st.aulas ||= {})[id] = pulou ? { d: hoje(), t: Date.now(), p: 1 } : { d: hoje(), t: Date.now() };
   st.aulaUlt = BASE_NOME[AULA_INFO[id]?.c] ? 'base' : 'tema';
   st.aulaFila = (st.aulaFila || []).filter(c => aulasDoTema(c).some(v => !aulaVista(v.id)));   // tema pedido e já visto sai da fila
+  salvar();
+}
+// a última aula marcada (vista ou pulada) — o "← Anterior" volta para ela
+function ultimaAula() {
+  let id = null, maior = -1;
+  for (const [k, x] of Object.entries(st.aulas || {})) {
+    if (!AULA_INFO[k]) continue;
+    const t = x.t || 0;
+    if (t >= maior) { maior = t; id = k; }   // empate (marcas antigas, sem hora): a última da lista
+  }
+  return id;
+}
+// desfaz a última marca: a aula volta a ser a aula da vez
+function voltarAula() {
+  const id = ultimaAula();
+  if (!id) return;
+  delete st.aulas[id];
+  st.aulaDia = { d: hoje(), id, m: '' };
   salvar();
 }
 // botão "aula do tema" na correção da questão: abre direto a próxima aula não vista do tema (ou a primeira)
@@ -1367,26 +1385,29 @@ function agendaHoje(p, f) {
       const opcional = !feito && !!(!p.hojeEstuda || rdc.hoje || sim.hoje);   // folga, ou dia de redação/simulado (já é pesado)
       const todas = '<a class="aula-todas small" href="#/aulas">Todas as aulas →</a>';
       // cartão largo em cima do "Hoje": capa do vídeo à esquerda (o player abre no lugar dela), texto e botões à direita
-      const html = !feito ? `<div class="aula-hero">
+      const ant = ultimaAula();
+      const voltar = ant ? `<button class="btn fantasma mini" type="button" data-ag="aula-volta" title="Volta para “${esc(AULA_INFO[ant].t)}” (desfaz o “Já assisti” ou o “Pular”)">← Anterior</button>` : '';
+      // cartão largo em cima do "Hoje": capa do vídeo à esquerda (o player abre no lugar dela), texto e botões à direita.
+      // Vista a aula do dia, o cartão continua com a capa da próxima (opcional)
+      const html = v ? `<div class="aula-hero">
           <a class="aula-capa" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}" title="Assistir aqui">
             <img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="" loading="lazy"><span class="aula-play">▶</span><span class="aula-dur">${v.min} min</span></a>
           <div class="aula-info">
-            <span class="aula-sobre">📺 Aula do dia · antes das questões${nAulas > 1 ? ` · ${vistas + 1} de ${nAulas}` : ''}${opcional ? ' <span class="chip">opcional</span>' : ''}</span>
+            <span class="aula-sobre">${feito ? `✓ ${vistas} ${vistas === 1 ? 'aula vista' : 'aulas vistas'} hoje · próxima (opcional)`
+              : `📺 Aula do dia · antes das questões${nAulas > 1 ? ` · ${vistas + 1} de ${nAulas}` : ''}${opcional ? ' <span class="chip">opcional</span>' : ''}`}</span>
             <b class="aula-tit">${esc(v.t)}</b>
             <span class="aula-tema">${esc(rotuloAula(v.c))}</span>
             <span class="aula-meta">${esc(v.canal)}${v.motivo ? ` · ${esc(v.motivo)}` : ''}</span>
             <div class="aula-botoes">
-              <a class="btn ag-btn" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir aqui</a>
+              <a class="btn ${feito ? 'mini' : 'ag-btn'}" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir aqui</a>
               <button class="btn mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>
               <button class="btn fantasma mini" type="button" data-ag="aula-pular" data-id="${v.id}" title="Já sei este assunto: passa para a próxima aula">Pular</button>
-              ${todas}</div>
+              ${voltar}${todas}</div>
           </div></div>`
         : `<div class="aula-hero compacta">
           <span class="ag-icone">✓</span>
-          <div class="aula-info"><b>${vistas > 1 ? `${vistas} videoaulas vistas hoje` : vistas ? 'Aula de hoje vista' : 'Nenhuma aula na fila'}</b>
-            ${v ? `<span class="aula-meta">Próxima (opcional): ${esc(v.t)} · ${v.min} min</span>` : ''}</div>
-          <div class="aula-botoes">${v ? `<a class="btn mini" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir</a>
-            <button class="btn fantasma mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>` : ''}${todas}</div></div>`;
+          <div class="aula-info"><b>${vistas > 1 ? `${vistas} videoaulas vistas hoje` : vistas ? 'Aula de hoje vista' : 'Nenhuma aula na fila'}</b></div>
+          <div class="aula-botoes">${voltar}${todas}</div></div>`;
       itens.push({ id: 'aula', icone: '📺', titulo: v && !feito ? v.t : 'Videoaula', min: feito ? 0 : v.min, feito, opcional, html });
     }
   }
@@ -1500,7 +1521,7 @@ function agendaHTML(p, f, itens) {
         </div>
       </div>
       ${x.corpo || ''}
-      ${x.frac !== undefined && !x.feito ? `<span class="barra fina"><i style="width:${Math.round(100 * Math.min(1, x.frac))}%"></i></span>` : ''}
+      ${x.frac > 0 && !x.feito ? `<span class="barra fina"><i style="width:${Math.round(100 * Math.min(1, x.frac))}%"></i></span>` : ''}
       <div class="ag-acoes">
         ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ag-btn" href="${x.botao.href}"${x.botao.fora ? ' target="_blank" rel="noopener"' : ''}${x.botao.tocar ? ` data-tocar="${x.botao.tocar}"` : ''}>${esc(x.botao.rotulo)}</a>` : `<button class="btn ag-btn" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
         ${x.extra || ''}</div>
@@ -1564,6 +1585,7 @@ function telaInicio() {
   $app.querySelector('[data-ag=sim-adiar]')?.addEventListener('click', () => { (st.simAdiados ||= []).push(h); st.simAdiados = st.simAdiados.slice(-30); salvar(); rota(); });
   $app.querySelector('[data-ag=aula-vi]')?.addEventListener('click', e => { marcarAula(e.currentTarget.dataset.id, false); rota(); });
   $app.querySelector('[data-ag=aula-pular]')?.addEventListener('click', e => { marcarAula(e.currentTarget.dataset.id, true); rota(); });
+  $app.querySelector('[data-ag=aula-volta]')?.addEventListener('click', () => { voltarAula(); rota(); });
   ligarTreinar();
   ligarTrilha();
   ligarRankingCrono();

@@ -229,7 +229,7 @@ function reforcosPendentes() {
   const lim = somaDias(hoje(), -REFORCO_DIAS);
   const fila = filaNovas(), usadas = new Set(), out = [];
   const pega = f => { const q = fila.find(x => !usadas.has(x.id) && f(x)); if (q) usadas.add(q.id); return q; };
-  for (const e of st.reforco || []) {
+  for (const e of [...(st.reforco || [])].sort((x, y) => x.d.localeCompare(y.d))) {   // os mais antigos primeiro (os obrigatórios de hoje)
     if (e.d <= lim) continue;
     const mat = e.c?.split('.')[0], area = BYID[e.id]?.area;
     const q = (e.c && pega(x => temaDe(x.id) === e.c)) || (mat && pega(x => temaDe(x.id)?.split('.')[0] === mat)) || pega(x => x.area === area);
@@ -1176,16 +1176,29 @@ function agendaHoje(p, f) {
         : `<button class="btn mini" type="button" data-ag="extras">+ ${st.cfg.bloco} extras</button>`,
     });
   }
-  // reforço dos erros: uma questão nova do mesmo tema para cada erro recente (conta como questão nova)
-  const refPend = reforcosPendentes().length, refFeitos = st.log[h]?.f || 0, refAberto = sessaoDe('reforco');
+  // reforço dos erros: uma questão nova do mesmo tema para cada erro recente (conta como questão nova).
+  // Só os erros de dias anteriores são obrigatórios hoje: os de hoje entram no plano amanhã (dá para adiantar) —
+  // senão errar nos extras, depois de bater o dia, "desfaria" o dia completo.
+  const pend = reforcosPendentes();
+  const refPend = pend.filter(x => x.e.d < h).length, refHoje = pend.length - refPend;
+  const refFeitos = st.log[h]?.f || 0, refAberto = sessaoDe('reforco');
+  const continuarRef = refAberto && { rotulo: `Continuar (${refAberto.i + 1}/${refAberto.itens.length})`, ir: () => retomar('reforco') };
+  const deHoje = refHoje ? `${refHoje} ${refHoje === 1 ? 'erro' : 'erros'} de hoje ${refHoje === 1 ? 'entra' : 'entram'} no plano amanhã` : '';
   if (refPend + refFeitos > 0) {
     itens.push({
       id: 'reforco', icone: '🧩', titulo: 'Reforço dos erros',
-      detalhe: refPend ? `${refFeitos} de ${refFeitos + refPend} · questões novas dos temas que você errou (as erradas voltam depois, quando você já esqueceu a resposta)`
-        : `${refFeitos} ${refFeitos === 1 ? 'feito' : 'feitos'} hoje`,
+      detalhe: refPend ? `${refFeitos} de ${refFeitos + refPend} · questões novas dos temas que você errou (as erradas voltam depois, quando você já esqueceu a resposta)${deHoje ? ` · +${deHoje}` : ''}`
+        : `${refFeitos} ${refFeitos === 1 ? 'feito' : 'feitos'} hoje${deHoje ? ` · ${deHoje}` : ''}`,
       min: refPend * 3, feito: refPend === 0, frac: refFeitos / (refFeitos + refPend),
-      botao: refAberto ? { rotulo: `Continuar (${refAberto.i + 1}/${refAberto.itens.length})`, ir: () => retomar('reforco') }
-        : { rotulo: `Fazer ${refPend}`, ir: () => iniciar(refPend, 'reforco') },
+      botao: continuarRef || { rotulo: `Fazer ${refPend}`, ir: () => iniciar(refPend, 'reforco') },
+      extra: !refPend && (refAberto || refHoje) ? `<button class="btn mini" type="button" data-ag="ref-adiantar">${refAberto ? `Continuar reforço (${refAberto.i + 1}/${refAberto.itens.length})` : `Adiantar ${refHoje}`}</button>` : '',
+    });
+  } else if (refHoje) {
+    itens.push({
+      id: 'reforco', icone: '🧩', titulo: 'Reforço dos erros de hoje',
+      detalhe: `${deHoje} · dá para adiantar agora`,
+      min: refHoje * 3, feito: false, opcional: true,
+      botao: continuarRef || { rotulo: `Adiantar ${refHoje}`, ir: () => iniciar(refHoje, 'reforco') },
     });
   }
   // desafio do dia: opcional
@@ -1292,6 +1305,7 @@ function telaInicio() {
   $app.querySelector('[data-ag=adiantar]')?.addEventListener('click', () => iniciar(st.cfg.bloco, 'rev'));
   $app.querySelector('[data-ag=extras]')?.addEventListener('click', () => iniciar(st.cfg.bloco, 'novas', null, { extra: true }));
   $app.querySelector('[data-ag=extras-cont]')?.addEventListener('click', () => retomar('extras'));
+  $app.querySelector('[data-ag=ref-adiantar]')?.addEventListener('click', () => (sessaoDe('reforco') ? retomar('reforco') : iniciar(reforcosPendentes().length, 'reforco')));
   $app.querySelector('[data-ag=sim-adiar]')?.addEventListener('click', () => { (st.simAdiados ||= []).push(h); st.simAdiados = st.simAdiados.slice(-30); salvar(); rota(); });
   ligarTreinar();
   ligarTrilha();

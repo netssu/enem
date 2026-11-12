@@ -1362,20 +1362,29 @@ function agendaHoje(p, f) {
     const v = aulaDaVez(), vistas = vistasHoje();
     if (v || vistas) {
       const feito = vistas >= nAulas || !v;
-      const btns = v ? `${feito ? `<a class="btn mini" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir a próxima (${v.min} min)</a>` : ''}
-        <button class="btn mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>
-        ${feito ? '' : `<button class="btn fantasma mini" type="button" data-ag="aula-pular" data-id="${v.id}" title="Já sei este assunto: passa para a próxima aula">Pular esta aula</button>`}` : '';
-      itens.push({
-        id: 'aula', icone: '📺',
-        titulo: feito ? (vistas === 1 ? 'Videoaula de hoje' : `${vistas} videoaulas hoje`) : v.t,
-        detalhe: feito
-          ? `${vistas ? `${vistas} ${vistas === 1 ? 'assistida' : 'assistidas'} hoje` : 'nenhuma aula na fila'}${v ? ` · próxima (opcional): <b>${esc(v.t)}</b> — ${esc(rotuloAula(v.c))}` : ''}`
-          : `antes das questões novas · ${esc(rotuloAula(v.c))}${v.motivo ? ` (${esc(v.motivo)})` : ''} · ${esc(v.canal)}${nAulas > 1 ? ` · ${vistas + 1} de ${nAulas}` : ''}`,
-        min: feito ? 0 : v.min, feito, opcional: !feito && !!(!p.hojeEstuda || rdc.hoje || sim.hoje),   // folga, ou dia de redação/simulado (já é pesado)
-        frac: nAulas > 1 ? vistas / nAulas : undefined,
-        botao: v && !feito ? { rotulo: `▶ Assistir aqui (${v.min} min)`, href: urlAula(v.id), fora: true, tocar: v.id } : null,
-        extra: btns + '<a class="btn fantasma mini" href="#/aulas">Todas as aulas</a>',
-      });
+      const opcional = !feito && !!(!p.hojeEstuda || rdc.hoje || sim.hoje);   // folga, ou dia de redação/simulado (já é pesado)
+      const todas = '<a class="aula-todas small" href="#/aulas">Todas as aulas →</a>';
+      // cartão largo em cima do "Hoje": capa do vídeo à esquerda (o player abre no lugar dela), texto e botões à direita
+      const html = !feito ? `<div class="aula-hero">
+          <a class="aula-capa" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}" title="Assistir aqui">
+            <img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="" loading="lazy"><span class="aula-play">▶</span><span class="aula-dur">${v.min} min</span></a>
+          <div class="aula-info">
+            <span class="aula-sobre">📺 Aula do dia · antes das questões novas${nAulas > 1 ? ` · ${vistas + 1} de ${nAulas}` : ''}${opcional ? ' <span class="chip">opcional</span>' : ''}</span>
+            <b class="aula-tit">${esc(v.t)}</b>
+            <span class="aula-meta">${esc(rotuloAula(v.c))} · ${esc(v.canal)}${v.motivo ? ` · <span class="aula-motivo">${esc(v.motivo)}</span>` : ''}</span>
+            <div class="aula-botoes">
+              <a class="btn ag-btn" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir aqui</a>
+              <button class="btn mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>
+              <button class="btn fantasma mini" type="button" data-ag="aula-pular" data-id="${v.id}" title="Já sei este assunto: passa para a próxima aula">Pular</button>
+              ${todas}</div>
+          </div></div>`
+        : `<div class="aula-hero compacta">
+          <span class="ag-icone">✓</span>
+          <div class="aula-info"><b>${vistas > 1 ? `${vistas} videoaulas vistas hoje` : vistas ? 'Aula de hoje vista' : 'Nenhuma aula na fila'}</b>
+            ${v ? `<span class="aula-meta">Próxima (opcional): <b>${esc(v.t)}</b> · ${esc(rotuloAula(v.c))} · ${v.min} min</span>` : ''}</div>
+          <div class="aula-botoes">${v ? `<a class="btn mini" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir</a>
+            <button class="btn fantasma mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>` : ''}${todas}</div></div>`;
+      itens.push({ id: 'aula', icone: '📺', titulo: v && !feito ? v.t : 'Videoaula', min: feito ? 0 : v.min, feito, opcional, html });
     }
   }
   if (!p.retaFinal && p.meta > 0) {
@@ -1454,7 +1463,8 @@ function agendaHTML(p, f, itens) {
     </div>
     ${resumoDia()}
     ${seq > 1 ? `<p class="small muted" style="margin:0 0 8px">🔥 ${seq} dias de desafio seguidos</p>` : ''}
-    <ul class="ag-lista">${itens.map(x => `<li class="ag-item cor-${COR[x.id] || 'azul'} ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">
+    ${itens.filter(x => x.html).map(x => `<div class="ag-item ag-aula cor-${COR[x.id] || 'azul'} ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">${x.html}</div>`).join('')}
+    <ul class="ag-lista">${itens.filter(x => !x.html).map(x => `<li class="ag-item cor-${COR[x.id] || 'azul'} ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">
       <div class="ag-cabeca">
         <span class="ag-icone">${x.feito ? '✓' : x.icone}</span>
         <div class="ag-texto"><b>${esc(x.titulo)}</b>${x.opcional ? '<span class="chip">opcional</span>' : ''}<span class="small">${x.detalhe}${x.min && !x.feito ? ` · ~${fmtDur(x.min)}` : ''}</span></div>

@@ -79,7 +79,24 @@ Exemplo: ~2.800 questões, 6 dias por semana, prova em novembro do ano que vem �
 
 ## 5. Como é um dia de estudo
 
-O estudo é em **blocos** (padrão 10 questões, ~30 min; dá pra escolher 5 a 30). Um bloco:
+### 📅 Roteiro do dia (o botão do cronograma)
+
+O cartão **Hoje** do cronograma mostra só **“O caminho de hoje”** (uma linha por parte, sem botões no meio) e **um botão**: **Começar o dia** (ou **Continuar o dia**, com quantas questões já foram). Ele abre uma tela só, em que o conteúdo vai chegando um passo por vez, sempre com **Continuar**:
+
+1. **Matérias do dia:** as questões novas da meta, separadas por tema — **todas do mesmo tema juntas**, na ordem das áreas (Linguagens → Humanas → Natureza → Matemática; dentro da área, a matéria com mais questões primeiro). **Antes de cada tema**, a videoaula dele aparece **só se você ainda não viu nenhuma aula daquele tema** (o vídeo toca ali mesmo, no lugar da capa). **Pular a aula** segue para as questões e o tema conta como visto (não pergunta de novo); passou de 90% do vídeo, o botão vira “Ir para as questões”.
+2. **🧩 Reforço dos erros** (os obrigatórios de hoje, dos erros de dias anteriores).
+3. **↺ Revisões do caderno de erros** (as vencidas).
+4. **✍️ Redação** ou **📝 Simulado**, nos dias deles (Escrever agora / Já fiz no papel / Deixar para depois; Começar o simulado / Adiar).
+5. **🎯 Desafio do dia** e **Concluir o dia** → tela de “Dia completo!”, com a opção de extras.
+
+- Cada fase abre com uma tela curta (o que vem e quantas questões). Em cima da questão aparece a parte e a posição nela (ex.: “Biologia › Citologia e bioquímica · 2/5”) e quantas questões do dia já foram.
+- O roteiro é montado quando você começa e fica salvo o dia todo (“Sair” guarda onde parou). O que você fizer em outro lugar sai sozinho do caminho; um tema cujas questões já foram feitas pula a aula dele também. No dia seguinte, um roteiro novo.
+- Com as aulas desligadas (Ajustes › Cronograma › Videoaulas), o roteiro vai direto às questões.
+- O **📚 Foco do momento** fica dentro do cartão Hoje, fechado.
+
+### Blocos avulsos (aba Questões)
+
+O estudo fora do roteiro é em **blocos** (padrão 10 questões, ~30 min; dá pra escolher 5 a 30). Um bloco:
 
 1. Até **metade das vagas** vai para revisões vencidas (as mais atrasadas primeiro).
 2. O resto são questões **novas**, intercaladas com as revisões.
@@ -87,6 +104,7 @@ O estudo é em **blocos** (padrão 10 questões, ~30 min; dá pra escolher 5 a 3
 
 Ordem das questões novas (Ajustes):
 - **Intercalado** (padrão): uma de cada área por vez (Linguagens → Humanas → Natureza → Matemática), das provas mais recentes para as mais antigas.
+- **ENEM 2025 aparece pouco:** as questões de 2025 continuam no banco, mas só **1 a cada 15 questões novas** (contando todas as que você já fez, então o ritmo não recomeça a cada dia) — para não parecer que você está refazendo a prova que acabou de fazer. Nos treinos de tema, 2025 vem por último. Sobrando só 2025, elas vêm em seguida.
 - **Prova por prova**: termina 2025 inteira, depois 2024, etc.
 
 Atalhos: **⚡ 5 rapidinhas** (fila de ônibus) e **↺ Só revisões**.
@@ -108,14 +126,22 @@ Cada área tem **um tema em foco por vez** (ex.: Natureza › Biologia › Citol
 
 Cada um dos 79 temas tem de 1 a 5 videoaulas do YouTube com **link direto** (não é busca), e a **matemática básica** tem um grupo à parte: números inteiros e expressões, MMC/MDC, frações, decimais, potências e raízes, notação científica, regra de três, equação do 1º grau, produtos notáveis e fatoração. São 216 vídeos, escolhidos entre os mais vistos de canais de ENEM (Professor Noslen, Gis com Giz, Dicasdemat, Professor Ferretto, Débora Aladim, Parabólica, Samuel Cunha, Paulo Jubilut, Professor Boaro, Gabriel Cabral, Descomplica, Brasil Escola, Toda Matéria…), em `app/data/aulas.js` (gerado por `tools/aulas.py`, que confere cada vídeo no YouTube).
 
-- **Playlist de hoje:** o cronograma monta, uma vez por dia, uma playlist com as aulas **dos temas das questões que você vai fazer hoje** (as novas até a meta e os reforços dos erros): uma aula por tema — a próxima que você ainda não viu dele —, primeiro os temas que você nunca estudou, depois os que têm mais questões hoje (até 6 aulas). Os temas que você pôs na frente (📌 na aba Aulas) entram no começo; com Matemática no dia, entra também uma aula de matemática básica. Dia sem questões novas: a fila geral (abaixo) completa.
-- **Quanto é obrigatório:** 1 aula por dia (ou 2, ou desligado, em Ajustes › Cronograma); o resto da playlist é opcional. A playlist fica fixa no dia (responder questões não muda a lista). Em folga, dia de redação ou de simulado, a aula é opcional.
-- **Fila geral** (aba Aulas e depois da playlist): (1) temas pedidos (📌); (2) as aulas dos temas em foco na trilha, alternando com a matemática básica; (3) as aulas do próximo tema de cada área. Sem trilha de focos (ou na reta final): matemática básica e os temas em que você mais erra.
-- **Antes de responder:** numa questão nova de um tema cuja aula você ainda não viu, aparece em cima dela **“📺 Antes de responder: você ainda não viu a aula de {tema}”** com **▶ Ver agora** (toca ali mesmo), **Já sei o assunto** (marca a aula como pulada e o tema não pede mais) e **Agora não** (não pergunta mais desse tema hoje). Revisões e questões já respondidas não mostram o aviso; com as aulas desligadas em Ajustes, também não.
-- **O vídeo toca dentro do site** (player do YouTube, pelo domínio youtube-nocookie): no cronograma, a aula do dia é um cartão largo no topo do “Hoje” (capa do vídeo | título, tema, canal e botões), e o vídeo abre no lugar da capa; embaixo da capa fica a lista da **playlist de hoje** (clicar numa aula toca ela no lugar da capa); vista a aula do dia, o cartão continua com a capa da próxima da playlist (opcional); **← Anterior** desfaz o último “Já assisti”/“Pular” e volta para aquela aula (uma por vez); na aba Aulas e na correção da questão, o player abre logo abaixo de onde você clicou. Um vídeo por vez; trocar de tela fecha. A posição fica guardada neste aparelho (`enem.aulaPos`) e o vídeo volta de onde parou. Passou de **90%** (ou chegou ao fim), a aula é **marcada como vista sozinha**. Ctrl+clique abre no YouTube. Todos os 216 vídeos permitem tocar incorporados (conferido).
-- **Aba Aulas:** todas as aulas por área › matéria › tema (o tema em foco aberto), as próximas da fila, marcar/desmarcar como vista e **📌 Pôr na frente do cronograma**. O card “Foco do momento” mostra quantas aulas do tema você já viu.
+- **No roteiro do dia:** antes das questões de cada tema, a 1ª aula do tema — só se você ainda não viu (nem pulou) nenhuma aula dele. Ver “Roteiro do dia”.
+- **Fora do roteiro** (blocos da aba Questões): numa questão nova de um tema sem aula vista, aparece em cima dela **“📺 Antes de responder: você ainda não viu a aula de {tema}”** com **▶ Ver agora**, **Já sei o assunto** e **Agora não** (não pergunta mais desse tema hoje).
+- **Próximas aulas sugeridas** (aba Aulas): (1) temas pedidos (📌); (2) as aulas dos temas em foco na trilha, alternando com a matemática básica; (3) as aulas do próximo tema de cada área. Sem trilha de focos (ou na reta final): matemática básica e os temas em que você mais erra.
+- **O vídeo toca dentro do site** (player do YouTube, pelo domínio youtube-nocookie): no roteiro, no lugar da capa; na aba Aulas e na correção da questão, logo abaixo de onde você clicou. Um vídeo por vez; trocar de tela fecha. A posição fica guardada neste aparelho (`enem.aulaPos`) e o vídeo volta de onde parou. Passou de **90%** (ou chegou ao fim), a aula é **marcada como vista sozinha**. Ctrl+clique abre no YouTube.
+- **Aba Aulas:** todas as aulas por área › matéria › tema (o tema em foco aberto), marcar/desmarcar como vista e **📌 Pôr na frente**.
 - **Na questão:** ao lado de “Resolução no YouTube”, o botão **📺 Aula: {tema}** toca ali mesmo a próxima aula não vista do tema da questão.
 - As aulas vistas vão para a nuvem (junção: união dos dois lados).
+
+## Reset geral do progresso
+
+Em novembro de 2026 o progresso de **todo mundo** recomeçou do zero (`RESET_VER = 2` no `app.js`; subir esse número faz outro reset). Na primeira vez que cada pessoa abre o site depois disso:
+
+- **Zera:** questões feitas, caderno de erros, reforços, registro dos dias, aulas vistas, trilha de focos, simulados, desafios, blocos guardados e, por consequência, o placar da semana no ranking (que é calculado do registro dos dias).
+- **Fica:** os ajustes (data da prova, dias de estudo, chaves de API), o nome no ranking e quem você acompanha, as redações e o cache das explicações.
+- Antes, uma cópia do progresso antigo vai para `enem.antes-do-reset` neste aparelho (só se havia progresso).
+- **Nuvem:** na junção, o lado de antes do reset é ignorado e trocado pelo novo na próxima gravação; um aparelho que já recomeçou não perde o que fez depois.
 
 ## 6. Onde ficam os dados
 
@@ -229,7 +255,7 @@ Um por semana, no dia de estudo mais forte (empate: o mais perto do fim de seman
 
 ### Agenda de hoje
 
-Na ordem: simulado (se for o dia), redação (se for o dia), revisões vencidas, a videoaula do dia, questões novas da meta, reforço dos erros e o desafio do dia (opcional). Cada item mostra o tempo que falta (3 min por questão, 1h15 por redação) e um botão. O cartão de **questões novas** mostra “O que vem agora”: quantas questões de cada área e de qual tema (o tema em foco da trilha), com um botão **▶ aula** para ver a aula daquele tema antes de começar (ou ✓ se você já viu). Cada cartão separa título, descrição e progresso. "Dia completo" quando todos os obrigatórios estão feitos.
+O cartão **Hoje** é o roteiro do dia (ver “Roteiro do dia”): o caminho em linhas e um botão só. A contagem “x de y tarefas” e o “Dia completo” continuam vindo das tarefas obrigatórias (simulado, redação, revisões vencidas, questões novas da meta e reforço dos erros). Dia completo: o botão vira **+ extras**.
 
 ### Quanto falta para um bom desempenho
 
@@ -241,6 +267,7 @@ Aba **Ranking** (só aparece quando o Firebase está configurado em `FIREBASE`, 
 
 - **Pontuação:** questões respondidas de segunda a domingo (novas + revisões, as mesmas do registro do dia). Zera toda segunda, para quem começou agora ter chance. Mostra também o acerto, mas não ordena por ele (incentivaria pular questões).
 - **Geral e ligas:** o geral mostra os 50 primeiros (e a sua posição, se você estiver fora). Uma **liga** é um código de 6 letras/números (“Criar liga”); o convite é um link `#/ranking/CODIGO` que já preenche o código. Uma liga por vez.
+- **Colunas:** a lista mostra o cabeçalho **# · Nome · Questões** (questões respondidas na semana, novas + revisões); na aba Ranking, “N questões” e “% de acerto”. Quem ainda aparece como “Estudante XXXXXX” é alguém que não abriu a versão nova do site (cada um só grava o próprio nome).
 - **Privacidade:** entrar no ranking é opcional; aparece o **nome da conta Google** (nome e sobrenome, até 20 caracteres; dá para trocar por um apelido de 2–20 caracteres), as questões da semana e o acerto — nunca o e-mail. Quem estava com o apelido gerado antigo (“Estudante XXXXXX”) passa a aparecer com o nome do Google; um apelido escolhido à mão continua. “Sair do ranking” apaga o placar da semana.
 - **Envio:** depois de cada resposta salva, o placar vai sozinho, no máximo uma vez a cada 15 s e só se mudou.
 - **Dados:** `semanas/{segunda AAAA-MM-DD}/jogadores/{uid}` → `{ apelido, liga, n, ok, total, t }`. Nenhuma consulta precisa de índice composto.

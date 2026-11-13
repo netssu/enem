@@ -107,6 +107,21 @@ function carregar() {
   return padrao();
 }
 let st = carregar();
+// ---- reset geral: subir RESET_VER recomeça o progresso de todo mundo do zero na próxima vez que abrir o site
+// (questões, caderno de erros, registro dos dias, aulas, trilha, simulados, desafios, placar da semana). Ficam os
+// ajustes (data da prova, dias, chaves de API), o nome no ranking, as redações e o cache das explicações. Antes,
+// uma cópia do progresso antigo vai para "enem.antes-do-reset" neste aparelho. Na nuvem, o lado de antes do reset é
+// ignorado na junção (mesclarEstado) e trocado pelo novo na próxima gravação.
+const RESET_VER = 2;
+if ((st.resetVer || 0) < RESET_VER) {
+  if (Object.keys(st.q || {}).length) {
+    try { localStorage.setItem('enem.antes-do-reset', JSON.stringify({ quando: new Date().toISOString(), st })); } catch { /* cheio: segue sem cópia */ }
+  }
+  const p = padrao();
+  st = { ...p, cfg: { ...p.cfg, ...st.cfg }, ...(st.ranking ? { ranking: st.ranking } : {}), resetVer: RESET_VER, intervalos2: 1, mod: Date.now() };
+  localStorage.setItem(KEY, JSON.stringify(st));
+
+}
 function salvar() {
   st.mod = Date.now();   // hora da última mudança: na junção com a nuvem, os ajustes do lado mais novo valem
   localStorage.setItem(KEY, JSON.stringify(st));
@@ -184,7 +199,7 @@ function filaNovas() {
   const cands = POOL().filter(q => !feita(q.id) && areas.includes(q.area));
   const pulou = q => (reg(q.id)?.pulou ? 1 : 0);
   if (st.cfg.ordem === 'prova') {
-    return cands.sort((a, b) => pulou(a) - pulou(b) || b.ano - a.ano || a.num - b.num);
+    return espalharRaras(cands.sort((a, b) => pulou(a) - pulou(b) || b.ano - a.ano || a.num - b.num));
   }
   // intercalado: uma de cada área por vez, das provas mais recentes para as mais antigas
   // (com a trilha de focos: dentro de cada área, o tema em foco e os temas que já passaram — ver ordemTrilha)
@@ -195,14 +210,29 @@ function filaNovas() {
     return ct ? ordemTrilha(a, l, ct) : l;
   });
   const feitasTotal = Object.keys(st.q).length;
-  const fila = [];
+  let fila = [];
   let i = feitasTotal % areas.length;
   while (porArea.some(l => l.length)) {
     const l = porArea[i % areas.length];
     if (l.length) fila.push(l.shift());
     i++;
   }
-  return fila;
+  return espalharRaras(fila);
+}
+// ENEM 2025 (a prova mais recente, que muita gente já fez): continua no banco, mas aparece pouco — 1 a cada
+// RARO_CADA questões novas, contando todas as que você já fez (o ritmo não recomeça a cada dia)
+const ANO_RARO = 2025, RARO_CADA = 15;
+function espalharRaras(l) {
+  const raras = l.filter(q => q.ano === ANO_RARO);
+  if (!raras.length) return l;
+  const out = [], feitas = Object.keys(st.q).length;
+  let k = 0;
+  for (const q of l) {
+    if (q.ano === ANO_RARO) continue;
+    if (k < raras.length && (feitas + out.length + 1) % RARO_CADA === 0) out.push(raras[k++]);
+    out.push(q);
+  }
+  return out.concat(raras.slice(k));
 }
 
 // ---- reforço dos erros: cada erro pede UMA questão NOVA do mesmo tema (sem tema sobrando: da matéria; depois da
@@ -389,7 +419,6 @@ function rotuloAula(c) { return BASE_NOME[c] ? `Matemática básica › ${BASE_N
 function urlAula(id) { return `https://www.youtube.com/watch?v=${id}`; }
 function aulaVista(id) { return !!st.aulas?.[id]; }
 function aulasPorDia() { return st.cfg.aulasDia ?? 1; }
-function vistasHoje() { const h = hoje(); return Object.values(st.aulas || {}).filter(x => x.d === h && !x.p).length; }
 // a fila das próximas aulas, cada uma com o motivo (por que ela vem agora)
 function filaAulas() {
   const out = [], usado = new Set();
@@ -422,67 +451,10 @@ function filaAulas() {
   return out;
 }
 function areaDoTema(c) { return TEMAS.nomes[c]?.[0]; }
-// ---- playlist do dia: as aulas dos temas das questões que você vai fazer HOJE (as novas até a meta e os reforços),
-// uma por tema — a próxima não vista dele —, os temas que você nunca estudou primeiro (e os mais cheios de questões).
-// Os temas pedidos (📌) vêm na frente. Se o dia não tiver questões (ou faltar aula), completa com a fila geral.
-// A playlist é montada uma vez por dia e fica fixa (responder questões não muda a lista).
-const PLAYLIST_MAX = 6;
-function temasDeHoje(p = plano()) {
-  const ab = sessaoDe('novas');
-  const qs = ab ? ab.itens.slice(ab.i).filter(x => x.tipo === 'nova' && !feita(x.id)).map(x => BYID[x.id]).filter(Boolean)
-    : p.retaFinal ? [] : filaNovas().slice(0, Math.max(0, p.meta - p.novasHoje));
-  const h = hoje();
-  for (const x of reforcosPendentes()) if (x.e.d < h) qs.push(x.q);
-  const cont = new Map();
-  for (const q of qs) { const c = temaDe(q.id); if (c) cont.set(c, (cont.get(c) || 0) + 1); }
-  return cont;   // tema -> quantas questões dele hoje (na ordem em que aparecem)
-}
-function montarPlaylist(p) {
-  const out = [], usado = new Set();
-  const poe = (v, m) => { if (v && !usado.has(v.id) && !aulaVista(v.id) && out.length < PLAYLIST_MAX) { usado.add(v.id); out.push([v.id, m]); } };
-  for (const c of st.aulaFila || []) poe(aulasDoTema(c).find(v => !aulaVista(v.id)), '📌 você pediu');
-  const cont = temasDeHoje(p);
-  const nunca = c => (aulasDoTema(c).some(v => aulaVista(v.id)) ? 1 : 0);
-  const temas = [...cont.keys()].filter(c => aulasDoTema(c).length).sort((a, b) => nunca(a) - nunca(b) || cont.get(b) - cont.get(a));
-  for (const c of temas) poe(aulasDoTema(c).find(v => !aulaVista(v.id)), `${cont.get(c)} ${cont.get(c) === 1 ? 'questão' : 'questões'} hoje`);
-  // a base de Matemática entra quando hoje tem Matemática; e a fila geral completa o mínimo do dia
-  if (temas.some(c => areaDoTema(c) === 'MT')) poe(filaAulas().find(v => BASE_NOME[v.c]), 'base de Matemática');
-  for (const v of filaAulas()) { if (out.length >= Math.max(1, aulasPorDia())) break; poe(v, v.motivo); }
-  return out;
-}
-function playlistDia(p = plano()) {
-  const h = hoje(), d = st.aulaDia;
-  if (d?.d !== h || !Array.isArray(d.l)) { st.aulaDia = { d: h, l: montarPlaylist(p) }; salvar(); }
-  return st.aulaDia.l.filter(([id]) => AULA_INFO[id]).map(([id, motivo]) => ({ ...AULA_INFO[id], motivo }));
-}
-// a aula da vez: a primeira da playlist ainda não vista; acabou a playlist, a próxima da fila geral (opcional)
-function aulaDaVez(p) {
-  const l = playlistDia(p);
-  return l.find(v => !aulaVista(v.id)) || filaAulas()[0] || null;
-}
 function marcarAula(id, pulou) {
   (st.aulas ||= {})[id] = pulou ? { d: hoje(), t: Date.now(), p: 1 } : { d: hoje(), t: Date.now() };
   st.aulaUlt = BASE_NOME[AULA_INFO[id]?.c] ? 'base' : 'tema';
   st.aulaFila = (st.aulaFila || []).filter(c => aulasDoTema(c).some(v => !aulaVista(v.id)));   // tema pedido e já visto sai da fila
-  salvar();
-}
-// a última aula marcada (vista ou pulada) — o "← Anterior" volta para ela
-function ultimaAula() {
-  let id = null, maior = -1;
-  for (const [k, x] of Object.entries(st.aulas || {})) {
-    if (!AULA_INFO[k]) continue;
-    const t = x.t || 0;
-    if (t >= maior) { maior = t; id = k; }   // empate (marcas antigas, sem hora): a última da lista
-  }
-  return id;
-}
-// desfaz a última marca: a aula volta a ser a aula da vez
-function voltarAula() {
-  const id = ultimaAula();
-  if (!id) return;
-  delete st.aulas[id];
-  const l = playlistDia();
-  if (!l.some(v => v.id === id)) st.aulaDia.l.unshift([id, '']);   // volta para a playlist de hoje, na frente
   salvar();
 }
 // botão "aula do tema" na correção da questão: abre direto a próxima aula não vista do tema (ou a primeira)
@@ -496,7 +468,7 @@ function botaoAulaTema(q) {
 // antes de responder uma questão de um tema cuja aula você ainda não viu: recomenda ver a aula agora.
 // "Já sei" marca a 1ª aula do tema como pulada (o tema não pede mais); "Agora não" cala o aviso desse tema hoje.
 function avisoAulaAntes(q, item, res) {
-  if (res || item.tipo === 'rev' || !aulasPorDia()) return '';
+  if (res || item.tipo === 'rev' || !aulasPorDia() || st.sessao?.tipo === 'dia') return '';   // no roteiro do dia a aula já vem antes do tema
   const c = temaDe(q.id), l = c ? aulasDoTema(c) : [];
   if (!l.length || l.some(v => aulaVista(v.id)) || st.aulaAgoraNao?.[c] === hoje()) return '';
   const v = l[0];
@@ -557,6 +529,8 @@ function fecharPlayer() {
 }
 // onde o player entra: no cartão da agenda (por dentro), numa lista (logo depois do item) ou no fim do card
 function lugarDoPlayer(btn) {
+  const pv = btn.closest('.passo-video');
+  if (pv) return { host: pv, por: el => { pv.prepend(el); } };   // roteiro do dia: o vídeo entra no lugar da capa
   const ag = btn.closest('.ag-item'), palco = document.querySelector('.ag-palco');
   if (ag?.classList.contains('ag-aula')) return { host: ag, por: el => { const h = ag.querySelector('.aula-hero'); if (h) h.after(el); else ag.appendChild(el); } };   // aula do dia: no lugar da capa
   if (ag && palco) return { host: null, por: el => palco.appendChild(el) };                    // outro cartão: em cima da grade
@@ -843,7 +817,7 @@ function montarItens(tipo, tam, alvo) {
   if (tipo === 'tema' || tipo === 'area') {
     const doAlvo = q => (tipo === 'tema' ? noAlvo(temaDe(q.id), alvo) : q.area === alvo);
     let revs = venc.filter(doAlvo).slice(0, Math.floor(tam / 2));
-    const novas = (tipo === 'tema' ? POOL().filter(q => !feita(q.id)).sort((x, y) => y.ano - x.ano || x.num - y.num) : filaNovas())
+    const novas = (tipo === 'tema' ? POOL().filter(q => !feita(q.id)).sort((x, y) => (x.ano === ANO_RARO) - (y.ano === ANO_RARO) || y.ano - x.ano || x.num - y.num) : filaNovas())
       .filter(doAlvo).slice(0, tam - revs.length);
     if (revs.length + novas.length < tam) {
       const ja = new Set(revs.map(q => q.id));
@@ -872,6 +846,7 @@ function montarItens(tipo, tam, alvo) {
 }
 // o item ainda vale? (só para os que ainda não foram respondidos neste bloco)
 function itemValido(it) {
+  if (ehPasso(it)) return true;
   const r = reg(it.id);
   if (!BYID[it.id]) return false;
   if (it.tipo === 'nova') return !feita(it.id) && (!it.ref || !!st.reforco?.some(e => e.id === it.ref));
@@ -1430,56 +1405,11 @@ function agendaHoje(p, f) {
       extra: mais ? `<button class="btn mini" type="button" data-ag="adiantar">Adiantar mais (${Math.min(mais, st.cfg.bloco)})</button>` : '',
     });
   }
-  // videoaula do dia: antes das questões novas, de um tema cujas questões vêm a seguir (prepara para elas)
-  const nAulas = aulasPorDia();
-  if (nAulas > 0) {
-    const pl = playlistDia(p), v = aulaDaVez(p), vistas = vistasHoje();
-    const plVistas = pl.filter(x => aulaVista(x.id)).length;
-    if (v || vistas || pl.length) {
-      // feito: viu o mínimo do dia (das aulas da playlist, ou quantas forem) ou não sobrou aula na playlist
-      const feito = !v || (pl.length ? plVistas >= Math.min(nAulas, pl.length) : vistas >= nAulas);
-      // a lista no mesmo visual do "O que vem agora" das questões novas: uma linha por aula, com a cor da área
-      const restoMin = pl.filter(x => !aulaVista(x.id)).reduce((s, x) => s + x.min, 0);
-      const lista = pl.length > 1 ? `<details class="pl-dia nq-previa" ${feito ? '' : 'open'}><summary class="nq-cab">Playlist de hoje · ${plVistas} de ${pl.length} vistas${restoMin ? ` · ~${fmtDur(restoMin)}` : ''}</summary>
-          <ul>${pl.map(x => `<li class="nq-linha pl-linha ${BASE_NOME[x.c] ? 'MT' : areaDoTema(x.c) || ''} ${aulaVista(x.id) ? 'vista' : ''} ${x.id === v?.id ? 'atual' : ''}">
-            <span class="nq-ponto"></span>
-            <a class="nq-tema" href="${urlAula(x.id)}" target="_blank" rel="noopener" data-tocar="${x.id}" title="${esc(rotuloAula(x.c))} · ${esc(x.canal)}${x.motivo ? ` · ${esc(x.motivo)}` : ''}">${aulaVista(x.id) ? '✓ ' : ''}${esc(x.t)} <span class="muted">· ${esc(BASE_NOME[x.c] || nomeTema(x.c))}</span></a>
-            <span class="pl-min">${x.min} min</span></li>`).join('')}</ul></details>` : '';
-      const opcional = !feito && !!(!p.hojeEstuda || rdc.hoje || sim.hoje);   // folga, ou dia de redação/simulado (já é pesado)
-      const todas = '<a class="aula-todas small" href="#/aulas">Todas as aulas →</a>';
-      const ant = ultimaAula();
-      const voltar = ant ? `<button class="btn fantasma mini" type="button" data-ag="aula-volta" title="Volta para “${esc(AULA_INFO[ant].t)}” (desfaz o “Já assisti” ou o “Pular”)">← Anterior</button>` : '';
-      // cartão largo em cima do "Hoje": capa do vídeo à esquerda (o player abre no lugar dela), texto e botões à direita.
-      // Embaixo, a playlist de hoje (as aulas dos temas das questões do dia). Vista a playlist, o cartão continua com a
-      // capa da próxima aula da fila geral (opcional)
-      const html = v ? `<div class="aula-hero">
-          <a class="aula-capa" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}" title="Assistir aqui">
-            <img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="" loading="lazy"><span class="aula-play">▶</span><span class="aula-dur">${v.min} min</span></a>
-          <div class="aula-info">
-            <span class="aula-sobre">${feito ? `✓ ${vistas} ${vistas === 1 ? 'aula vista' : 'aulas vistas'} hoje · próxima${pl.some(x => x.id === v.id) ? ' da playlist' : ''} (opcional)`
-              : `📺 Playlist de hoje · antes das questões${pl.length > 1 ? ` · ${plVistas + 1} de ${pl.length}` : ''}${opcional ? ' <span class="chip">opcional</span>' : ''}`}</span>
-            <b class="aula-tit">${esc(v.t)}</b>
-            <span class="aula-meta">${esc(rotuloAula(v.c))} · ${esc(v.canal)}${v.motivo ? ` · ${esc(v.motivo)}` : ''}</span>
-            <div class="aula-botoes">
-              <a class="btn mini ${feito ? '' : 'aula-play-btn'}" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir aqui</a>
-              <button class="btn mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>
-              <button class="btn fantasma mini" type="button" data-ag="aula-pular" data-id="${v.id}" title="Já sei este assunto: passa para a próxima aula">Pular</button>
-              ${voltar}${todas}</div>
-          </div></div>${lista}`
-        : `<div class="aula-hero compacta">
-          <span class="ag-icone">✓</span>
-          <div class="aula-info"><b>${vistas > 1 ? `${vistas} videoaulas vistas hoje` : vistas ? 'Aula de hoje vista' : 'Nenhuma aula na fila'}</b></div>
-          <div class="aula-botoes">${voltar}${todas}</div></div>${lista}`;
-      itens.push({ id: 'aula', icone: '📺', titulo: v && !feito ? v.t : 'Videoaula', min: feito ? 0 : v.min, feito, opcional, html });
-    }
-  }
   if (!p.retaFinal && p.meta > 0) {
     const falta = Math.max(0, p.meta - p.novasHoje);
     itens.push({
       id: 'novas', icone: '➕', titulo: 'Questões novas',
       nota: `${p.novasHoje} de ${p.meta}${p.novasHoje > p.meta ? ` (+${p.novasHoje - p.meta})` : ''}`,
-      corpo: (falta ? previaNovas(novasAberta ? novasAberta.itens.slice(novasAberta.i).filter(x => x.tipo === 'nova' && !feita(x.id)).map(x => BYID[x.id]).filter(Boolean)
-        : filaNovas().slice(0, falta)) : '') + cardTrilha(p, true),
       min: falta * 3, feito: falta === 0, frac: p.novasHoje / p.meta,
       botao: novasAberta ? { rotulo: `Continuar (${novasAberta.i + 1}/${novasAberta.itens.length})`, ir: () => retomar('novas') }
         : { rotulo: `Fazer as ${falta}`, ir: () => iniciar(falta, 'novas') },
@@ -1526,25 +1456,209 @@ function agendaHoje(p, f) {
   });
   return itens;
 }
-// prévia das questões novas de hoje: quantas de cada área e de qual tema (o tema em foco, se a trilha estiver ligada),
-// com a aula do tema ao lado — dá para ver a aula antes de começar
-function previaNovas(qs) {
-  if (!qs.length) return '';
-  const porArea = {};
-  for (const q of qs) (porArea[q.area] ||= []).push(q);
-  const linhas = ORDEM_AREAS.filter(a => porArea[a]).map(a => {
-    const l = porArea[a], cont = {};
-    for (const q of l) { const c = temaDe(q.id); if (c) cont[c] = (cont[c] || 0) + 1; }
-    const [top, n] = Object.entries(cont).sort((x, y) => y[1] - x[1])[0] || [];
-    const tema = top && n * 2 >= l.length ? top : null;   // um tema domina a área hoje (o foco da trilha; as outras são de temas passados)
-    const aulas = tema ? aulasDoTema(tema) : [], prox = aulas.find(v => !aulaVista(v.id));
-    const aula = !aulas.length ? '' : prox
-      ? `<a class="nq-aula" href="${urlAula(prox.id)}" target="_blank" rel="noopener" data-tocar="${prox.id}" title="Aula: ${esc(prox.t)} (${prox.min} min)">▶ aula</a>`
-      : '<span class="nq-aula vista" title="Você já viu as aulas deste tema">✓ aula</span>';
-    return `<li class="nq-linha ${a}"><span class="nq-ponto"></span><span class="nq-tema" title="${esc(AREAS[a])}">${esc(tema ? nomeTema(tema) : AREAS[a])}</span>${aula}<b class="nq-n">${l.length}</b></li>`;
-  });
-  return `<div class="nq-previa"><span class="nq-cab">O que vem agora</span><ul>${linhas.join('')}</ul></div>`;
+// ---------------------------------------------------------------- roteiro do dia
+// O "Hoje" é um caminho só, numa tela: "Começar o dia" e você vai recebendo o conteúdo, um passo por vez, só
+// clicando em "Continuar":
+//   1. as questões novas separadas por matéria e tema — todas do mesmo tema juntas, na ordem das áreas (as matérias
+//      com mais questões primeiro). Antes de cada tema, a videoaula dele, só se você ainda não viu nenhuma aula do
+//      tema (dá para pular: o tema conta como visto);
+//   2. o reforço dos erros (os obrigatórios de hoje); 3. as revisões do caderno de erros;
+//   4. a redação ou o simulado, nos dias deles; 5. o desafio do dia.
+// É um bloco do tipo "dia": os passos que não são questão têm tipo 'aula' ou 'etapa'. Fica montado o dia todo;
+// o que você fizer em outro lugar sai sozinho do caminho (podar).
+const SEC = { reforco: 'Reforço dos erros', rev: 'Revisões do caderno de erros', red: 'Redação', sim: 'Simulado', desafio: 'Desafio do dia' };
+function ehPasso(it) { return it?.tipo === 'aula' || it?.tipo === 'etapa'; }
+function montarDia(p = plano()) {
+  const h = hoje(), f = diaHoje(p), itens = [], usado = new Set();
+  const poe = (it, sec) => { if (usado.has(it.id)) return; usado.add(it.id); itens.push({ ...it, sec }); };
+  const falta = p.retaFinal ? 0 : Math.max(0, p.meta - p.novasHoje);
+  if (falta) {
+    const grupos = new Map();
+    for (const it of montarItens('novas', falta)) {
+      const c = temaDe(it.id) || BYID[it.id].area;
+      if (!grupos.has(c)) grupos.set(c, []);
+      grupos.get(c).push(it);
+    }
+    const ehTema = c => !!TEMAS.nomes[c];
+    const mat = c => (ehTema(c) ? materiaDe(c) : '');
+    const areaIdx = c => ORDEM_AREAS.indexOf(ehTema(c) ? areaDoTema(c) : c);
+    const nMat = {};
+    for (const [c, l] of grupos) nMat[mat(c)] = (nMat[mat(c)] || 0) + l.length;
+    const ordem = [...grupos.keys()].sort((a, b) => areaIdx(a) - areaIdx(b) || nMat[mat(b)] - nMat[mat(a)]
+      || mat(a).localeCompare(mat(b)) || grupos.get(b).length - grupos.get(a).length);
+    ordem.forEach((c, k) => {
+      const l = grupos.get(c), sec = ehTema(c) ? rotuloTema(c) : AREAS[c];
+      const aulas = ehTema(c) && aulasPorDia() ? aulasDoTema(c) : [];
+      if (aulas.length && !aulas.some(v => aulaVista(v.id))) itens.push({ id: `aula:${c}`, tipo: 'aula', v: aulas[0].id, c, sec, n: l.length, g: k + 1, gs: ordem.length });
+      for (const it of l) poe(it, sec);
+    });
+  }
+  const ref = reforcosPendentes().filter(x => x.e.d < h && !usado.has(x.q.id));
+  if (ref.length) {
+    itens.push({ id: 'etapa:reforco', tipo: 'etapa', k: 'reforco', sec: SEC.reforco, n: ref.length });
+    for (const { e, q } of ref) poe({ id: q.id, tipo: 'nova', ref: e.id }, SEC.reforco);
+  }
+  if (f.revFaltam > 0) {
+    const rv = montarItens('rev', f.revFaltam).filter(it => !usado.has(it.id));
+    if (rv.length) {
+      itens.push({ id: 'etapa:rev', tipo: 'etapa', k: 'rev', sec: SEC.rev, n: rv.length });
+      for (const it of rv) poe(it, SEC.rev);
+    }
+  }
+  if (p.redacao.hoje && !p.redacao.hoje.feita) itens.push({ id: 'etapa:red', tipo: 'etapa', k: 'red', sec: SEC.red });
+  if (p.simulados.hoje?.cfg && !p.simulados.hoje.feito) itens.push({ id: 'etapa:sim', tipo: 'etapa', k: 'sim', sec: SEC.sim });
+  itens.push({ id: 'etapa:desafio', tipo: 'etapa', k: 'desafio', sec: SEC.desafio });
+  return itens;
 }
+// o roteiro de hoje em andamento (o de ontem não vale mais)
+function diaAberto() { const s = sessaoDe('dia'); return s && s.criada === hoje() ? s : null; }
+function iniciarDia() {
+  if (diaAberto()) return retomar('dia');
+  pausarAtiva();
+  if (st.pausadas) delete st.pausadas.dia;
+  st.sessao = { tipo: 'dia', itens: montarDia(), i: 0, res: [], criada: hoje(), de: '#/' };
+  salvar();
+  irEstudar();
+}
+// as partes do roteiro (um tema, o reforço, as revisões…), com o que cada uma tem e onde começa e acaba
+function partesDia(itens) {
+  const partes = [];
+  itens.forEach((it, k) => {
+    let e = partes[partes.length - 1];
+    if (!e || e.sec !== it.sec) {
+      e = { sec: it.sec, k: it.tipo === 'etapa' ? it.k : 'materia', c: it.c || temaDe(it.id), area: BYID[it.id]?.area, n: 0, aula: null, ini: k, fim: k };
+      partes.push(e);
+    }
+    if (it.tipo === 'aula') e.aula = it.v;
+    else if (it.tipo !== 'etapa') e.n++;
+    e.fim = k;
+  });
+  return partes;
+}
+// um passo do roteiro que não é questão: a aula antes de um tema ou a abertura de uma fase
+function telaPasso(s, item) {
+  const p = plano(), f = diaHoje(p), h = hoje();
+  const seguir = () => { s.i++; salvar(); window.scrollTo(0, 0); rota(); };
+  const pula = () => { s.i++; salvar(); return telaEstudar(); };
+  const temQuestao = !!s.itens[s.i + 1] && !ehPasso(s.itens[s.i + 1]);
+  if ((item.tipo === 'aula' || item.k === 'reforco' || item.k === 'rev') && !temQuestao) return pula();   // as questões já foram feitas em outro lugar
+  if (item.k === 'red' && (!p.redacao.hoje || p.redacao.hoje.feita)) return pula();
+  if (item.k === 'sim' && (!p.simulados.hoje?.cfg || p.simulados.hoje.feito)) return pula();
+  const partes = partesDia(s.itens), parte = partes.find(x => s.i >= x.ini && s.i <= x.fim);
+  const nQ = s.itens.filter(x => !ehPasso(x)).length;
+  let sobre = '', titulo = '', texto = '', meio = '', acoes = '';
+  const botao = (rot, dado, cls = 'primario grande') => `<button class="btn ${cls}" type="button" data-passo="${dado}">${rot}</button>`;
+  if (item.tipo === 'aula') {
+    const v = AULA_INFO[item.v];
+    sobre = `Matéria ${item.g} de ${item.gs} · ${esc(AREAS[areaDoTema(item.c)] || '')}`;
+    titulo = esc(nomeTema(item.c));
+    texto = `${esc(materiaDe(item.c))} · ${item.n} ${item.n === 1 ? 'questão' : 'questões'} logo depois. Você ainda não viu nenhuma aula deste tema: vale ver agora, antes de responder.`;
+    meio = `<div class="passo-video"><a class="aula-capa" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}" title="Assistir aqui">
+        <img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="" loading="lazy"><span class="aula-play">▶</span><span class="aula-dur">${v.min} min</span></a>
+        <p class="small muted">${esc(v.t)} · ${esc(v.canal)}</p></div>`;
+    acoes = botao(aulaVista(v.id) ? 'Ir para as questões →' : 'Pular a aula →', 'aula');
+  } else if (item.k === 'reforco' || item.k === 'rev') {
+    sobre = 'Próxima fase';
+    titulo = item.k === 'reforco' ? '🧩 Reforço dos erros' : '↺ Revisões do caderno de erros';
+    texto = item.k === 'reforco'
+      ? `${item.n} ${item.n === 1 ? 'questão nova' : 'questões novas'} dos temas que você errou nos últimos dias. As erradas mesmo voltam depois, quando você já esqueceu a resposta.`
+      : `${item.n} ${item.n === 1 ? 'questão que você errou e chegou a hora' : 'questões que você errou e chegou a hora'} de refazer.`;
+    acoes = botao('Começar →', 'seguir');
+  } else if (item.k === 'red') {
+    const tema = temaSugerido(), ano = anoDoTema(tema);
+    sobre = 'Próxima fase';
+    titulo = '✍️ Redação';
+    texto = `Tema de hoje: ${ano ? `🏅 ENEM ${ano}: ` : ''}<b>${esc(tema)}</b>. Leva uns 75 minutos.`;
+    acoes = `${botao('Escrever agora →', 'red')}${botao('Já fiz no papel', 'red-feita', 'fantasma')}${botao('Deixar para depois', 'red-adiar', 'fantasma')}`;
+  } else if (item.k === 'sim') {
+    const c = p.simulados.hoje.cfg;
+    sobre = 'Próxima fase';
+    titulo = `📝 Simulado: ${esc(c.rotulo)}`;
+    texto = `${c.n} questões no tempo de prova (~${fmtDur(c.n * 3)}).`;
+    acoes = `${botao('Começar o simulado →', 'sim')}${botao('Adiar', 'sim-adiar', 'fantasma')}`;
+  } else {
+    const { def, arg } = desafioHoje(p, f), R = respostasHoje(), pr = def.prog(R, p, f, arg);
+    if (pr.feito && !st.desafiosFeitos?.[h]) { (st.desafiosFeitos ||= {})[h] = 1; salvar(); }
+    const feito = !!st.desafiosFeitos?.[h], ac = feito ? null : def.acao(p, f, arg, R);
+    sobre = 'Para fechar';
+    titulo = `🎯 Desafio: ${esc(def.titulo)}`;
+    texto = `${def.texto(p, arg)}${feito ? ' <b>Cumprido ✓</b>' : ''}`;
+    meio = feito ? '' : `<div class="passo-prog"><span class="barra"><i style="width:${Math.max(3, Math.round(100 * Math.min(1, pr.frac || 0)))}%"></i></span><span class="small muted">${esc(pr.txt)}</span></div>`;
+    acoes = `${ac ? (ac.href ? `<a class="btn grande" href="${ac.href}">${esc(ac.rotulo)}</a>` : botao(esc(ac.rotulo), 'desafio', 'grande')) : ''}${botao('Concluir o dia ✓', 'seguir')}`;
+    item.acao = ac;
+  }
+  const feitasQ = s.itens.slice(0, s.i).filter(x => !ehPasso(x)).length;
+  $app.innerHTML = `
+    <div class="q-prog"><i style="width:${pct(s.i, s.itens.length)}%"></i></div>
+    <div class="q-topo">
+      <div class="info"><span class="chip">📅 Roteiro de hoje</span>${parte ? ` <span class="small muted">parte ${partes.indexOf(parte) + 1} de ${partes.length}</span>` : ''}</div>
+      <div class="info"><span class="small muted">${feitasQ} de ${nQ} questões</span><a class="btn mini" href="#/" title="Sair (o roteiro fica salvo)">Sair</a></div>
+    </div>
+    <section class="card passo">
+      <span class="passo-sobre">${sobre}</span>
+      <h1>${titulo}</h1>
+      <p class="passo-texto">${texto}</p>
+      ${meio}
+      <div class="passo-acoes">${acoes}</div>
+    </section>`;
+  const on = (d, fn) => $app.querySelector(`[data-passo="${d}"]`)?.addEventListener('click', fn);
+  on('seguir', seguir);
+  on('aula', () => { if (!aulaVista(item.v)) marcarAula(item.v, true); seguir(); });   // pulou: o tema conta como visto
+  on('red', () => { salvar(); abrirRedacaoDoDia(); });
+  on('red-feita', () => { (red.feitas ||= []).push(h); salvarRed(); seguir(); });
+  on('red-adiar', () => { (red.adiadas ||= []).push(h); salvarRed(); seguir(); });
+  on('sim', () => iniciarSimulado(p.simulados.hoje.cfg));
+  on('sim-adiar', () => { (st.simAdiados ||= []).push(h); st.simAdiados = st.simAdiados.slice(-30); seguir(); });
+  on('desafio', () => item.acao?.ir?.());
+  // a aula ficou vista (90% do vídeo): o botão vira "Ir para as questões"
+  if (item.tipo === 'aula') {
+    const t = setInterval(() => { const b = $app.querySelector('[data-passo="aula"]'); if (b && aulaVista(item.v)) { b.textContent = 'Ir para as questões →'; clearInterval(t); } }, 2000);
+    aoSair(() => clearInterval(t));
+  }
+  const teclas = e => { if (e.key === 'Enter' && !e.target.matches?.('input, textarea, select, button, a')) $app.querySelector('.passo-acoes .primario')?.click(); };
+  document.addEventListener('keydown', teclas);
+  aoSair(() => document.removeEventListener('keydown', teclas));
+}
+// o cartão "Hoje" do cronograma: o roteiro do dia em linhas (sem botões no meio) e um botão só
+function cardDia(p, itens) {
+  const obrig = itens.filter(x => !x.opcional);
+  const feitos = obrig.filter(x => x.feito).length;
+  const completo = obrig.length > 0 && feitos === obrig.length;
+  const s = diaAberto();
+  const rot = s ? s.itens : montarDia(p);
+  const partes = partesDia(rot).filter(e => e.n || e.k === 'red' || e.k === 'sim' || e.k === 'desafio');
+  const pos = s ? s.i : (completo ? Infinity : -1);
+  const minQ = rot.filter(x => !ehPasso(x)).length * 3 + rot.filter(x => x.tipo === 'aula').reduce((t, x) => t + (AULA_INFO[x.v]?.min || 0), 0);
+  const linha = e => {
+    const est = pos > e.fim ? 'feita' : pos >= e.ini ? 'atual' : '';
+    const ic = est === 'feita' ? '✓' : '';
+    if (e.k === 'materia') {
+      const tema = !!TEMAS.nomes[e.c], area = tema ? areaDoTema(e.c) : e.area;
+      return `<li class="nq-linha dia-linha ${est} ${area || ''}"><span class="nq-ponto">${ic}</span><span class="nq-tema"><b>${esc(tema ? nomeTema(e.c) : AREAS[area] || e.sec)}</b> <span class="muted">${esc(tema ? materiaDe(e.c) : '')}</span></span>${e.aula ? '<span class="dia-aula" title="Com videoaula antes">📺 aula</span>' : ''}<b class="nq-n">${e.n}</b></li>`;
+    }
+    const nome = { reforco: '🧩 Reforço dos erros', rev: '↺ Revisões', red: '✍️ Redação', sim: '📝 Simulado', desafio: '🎯 Desafio do dia' }[e.k];
+    return `<li class="nq-linha dia-linha dia-fase ${est}"><span class="nq-ponto">${ic}</span><span class="nq-tema"><b>${nome}</b></span><b class="nq-n">${e.n || ''}</b></li>`;
+  };
+  const nMat = partes.filter(e => e.k === 'materia').length;
+  const cab = completo ? '✓ <b>Dia completo!</b> Daqui para frente é lucro.'
+    : !p.hojeEstuda && !obrig.length ? 'Hoje é <b>folga</b>. Se quiser, o roteiro está aí — sem culpa.'
+    : `${nMat ? `${nMat} ${nMat === 1 ? 'tema' : 'temas'} · ` : ''}~${fmtDur(minQ)}`;
+  const nQ = l => l.filter(x => !ehPasso(x)).length;
+  const botao = s ? `<button class="btn primario grande dia-btn" data-dia="ir">Continuar o dia → <small>${nQ(s.itens.slice(0, s.i))} de ${nQ(s.itens)} questões</small></button>`
+    : completo ? `<button class="btn grande dia-btn" data-dia="extras">+ ${st.cfg.bloco} questões extras</button>`
+    : '<button class="btn primario grande dia-btn" data-dia="ir">Começar o dia →</button>';
+  return `<section class="card agenda dia-card">
+    <div class="ag-topo">
+      <div><h2>Hoje</h2><span class="ag-cab">${cab}</span></div>
+      ${obrig.length ? `<div class="barra ag-barra"><i style="width:${Math.max(2, pct(feitos, obrig.length))}%"></i></div>` : ''}
+    </div>
+    ${resumoDia()}
+    ${partes.length ? `<div class="nq-previa dia-previa"><span class="nq-cab">O caminho de hoje</span><ul>${partes.map(linha).join('')}</ul></div>` : ''}
+    ${botao}
+    ${cardTrilha(p, true)}
+  </section>`;
+}
+
 // o que já foi feito hoje (todas as respostas, de qualquer aba)
 function resumoDia() {
   const lg = st.log[hoje()] || { n: 0, r: 0, ok: 0 };
@@ -1552,46 +1666,6 @@ function resumoDia() {
   if (!tot) return '';
   return `<p class="small muted" style="margin:0 0 4px">Hoje: <b>${tot}</b> ${tot === 1 ? 'resposta' : 'respostas'} (${lg.n} ${lg.n === 1 ? 'nova' : 'novas'}, ${lg.r} ${lg.r === 1 ? 'revisão' : 'revisões'}) · ${pct(lg.ok, tot)}% de acerto</p>`;
 }
-function agendaHTML(p, f, itens) {
-  const obrig = itens.filter(x => !x.opcional);
-  const feitos = obrig.filter(x => x.feito).length;
-  const falta = obrig.filter(x => !x.feito).reduce((s, x) => s + x.min, 0);
-  const completo = obrig.length && feitos === obrig.length;
-  const seq = seqDesafio();
-  let cab;
-  if (!p.hojeEstuda && !obrig.length) cab = 'Hoje é <b>folga</b> no seu cronograma. Se quiser, o desafio do dia e a aba Questões estão aí — sem culpa.';
-  else if (completo) cab = `✓ <b>Dia completo!</b> ${p.novasHoje > p.meta && p.meta ? `E com +${p.novasHoje - p.meta} novas além da meta. ` : ''}Daqui para frente é lucro.`;
-  else cab = `${feitos} de ${obrig.length} ${obrig.length === 1 ? 'tarefa' : 'tarefas'} · faltam <b>~${fmtDur(falta)}</b>`;
-  // cada tipo de tarefa tem a sua cor (como no visual novo): ícone, barra e botão
-  const COR = { novas: 'azul', rev: 'laranja', reforco: 'roxo', red: 'verde', sim: 'rosa', desafio: 'ouro', aula: 'verm' };
-  return `<section class="card agenda">
-    <div class="ag-topo">
-      <div><h2>Hoje</h2><span class="ag-cab">${cab}</span></div>
-      ${obrig.length ? `<div class="barra ag-barra"><i style="width:${Math.max(2, pct(feitos, obrig.length))}%"></i></div>` : ''}
-    </div>
-    ${resumoDia()}
-    ${seq > 1 ? `<p class="small muted" style="margin:0 0 8px">🔥 ${seq} dias de desafio seguidos</p>` : ''}
-    ${itens.filter(x => x.html).map(x => `<div class="ag-item ag-aula cor-${COR[x.id] || 'azul'} ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">${x.html}</div>`).join('')}
-    <div class="ag-palco"></div>
-    <ul class="ag-lista">${itens.filter(x => !x.html).map(x => `<li class="ag-item cor-${COR[x.id] || 'azul'} ${x.feito ? 'feito' : ''} ${x.opcional ? 'opcional' : ''}" data-item="${x.id}">
-      <div class="ag-cabeca">
-        <span class="ag-icone">${x.feito ? '✓' : x.icone}</span>
-        <div class="ag-texto">
-          <div class="ag-tit"><b>${esc(x.titulo)}</b>${x.opcional ? '<span class="chip">opcional</span>' : ''}</div>
-          ${x.detalhe ? `<p class="ag-desc">${x.detalhe}</p>` : ''}
-          ${x.nota || (x.min && !x.feito) ? `<span class="ag-nota">${[x.nota, x.min && !x.feito ? `~${fmtDur(x.min)}` : ''].filter(Boolean).join(' · ')}</span>` : ''}
-        </div>
-      </div>
-      ${x.corpo || ''}
-      ${x.frac > 0 && !x.feito ? `<span class="barra fina"><i style="width:${Math.round(100 * Math.min(1, x.frac))}%"></i></span>` : ''}
-      <div class="ag-acoes">
-        ${x.botao && !x.feito ? (x.botao.href ? `<a class="btn ag-btn" href="${x.botao.href}"${x.botao.fora ? ' target="_blank" rel="noopener"' : ''}${x.botao.tocar ? ` data-tocar="${x.botao.tocar}"` : ''}>${esc(x.botao.rotulo)}</a>` : `<button class="btn ag-btn" type="button" data-ir="${x.id}">${esc(x.botao.rotulo)}</button>`) : ''}
-        ${x.extra || ''}</div>
-    </li>`).join('')}</ul>
-    <p class="small muted" style="margin:14px 0 0">Quer só responder questões, sem plano? Use a aba <a href="#/questoes">Questões</a> — tudo conta no cronograma do mesmo jeito.</p>
-  </section>`;
-}
-
 function telaInicio() {
   const p = plano();
   const h = hoje();
@@ -1614,16 +1688,16 @@ function telaInicio() {
         <span><b>${NOME_FASE[faseDe(h, p.fimNovas)]}</b> · ${diasEstudo} dias de estudo</span></div>` : ''}
     </div>
     ${cardFoco()}
-    ${agendaHTML(p, f, itens)}
+    ${cardDia(p, itens)}
     ${cardRankingCrono()}
-    ${itens.some(x => x.id === 'novas') ? '' : cardTrilha(p)}
     ${cardSemanaMes(p)}
     ${semanasAteProvaHTML(p)}
     ${prontidaoHTML()}
     ${planoAteProvaHTML(p)}
     <p class="small muted" style="text-align:center">Como o cronograma é calculado? <a href="#/logica">Ver a lógica completa →</a></p>
   `;
-  $app.querySelectorAll('[data-ir]').forEach(b => b.addEventListener('click', () => itens.find(x => x.id === b.dataset.ir)?.botao?.ir?.()));
+  $app.querySelector('[data-dia=ir]')?.addEventListener('click', iniciarDia);
+  $app.querySelector('[data-dia=extras]')?.addEventListener('click', () => (sessaoDe('extras') ? retomar('extras') : iniciar(st.cfg.bloco, 'novas', null, { extra: true })));
   // semana | mês: troca só o card (a escolha fica guardada neste navegador)
   const trocaVista = e => {
     const b = e.target.closest('[data-vista]');
@@ -1635,19 +1709,6 @@ function telaInicio() {
     document.getElementById('card-vista').addEventListener('click', trocaVista);
   };
   $app.querySelector('#card-vista')?.addEventListener('click', trocaVista);
-  $app.querySelector('[data-ag=red-feita]')?.addEventListener('click', () => {
-    if (!confirm('Marcar a redação de hoje como feita (sem mandar para a correção)?')) return;
-    (red.feitas ||= []).push(h); salvarRed(); rota();
-  });
-  $app.querySelector('[data-ag=red-adiar]')?.addEventListener('click', () => { (red.adiadas ||= []).push(h); salvarRed(); rota(); });
-  $app.querySelector('[data-ag=adiantar]')?.addEventListener('click', () => iniciar(st.cfg.bloco, 'rev'));
-  $app.querySelector('[data-ag=extras]')?.addEventListener('click', () => iniciar(st.cfg.bloco, 'novas', null, { extra: true }));
-  $app.querySelector('[data-ag=extras-cont]')?.addEventListener('click', () => retomar('extras'));
-  $app.querySelector('[data-ag=ref-adiantar]')?.addEventListener('click', () => (sessaoDe('reforco') ? retomar('reforco') : iniciar(reforcosPendentes().length, 'reforco')));
-  $app.querySelector('[data-ag=sim-adiar]')?.addEventListener('click', () => { (st.simAdiados ||= []).push(h); st.simAdiados = st.simAdiados.slice(-30); salvar(); rota(); });
-  $app.querySelector('[data-ag=aula-vi]')?.addEventListener('click', e => { marcarAula(e.currentTarget.dataset.id, false); rota(); });
-  $app.querySelector('[data-ag=aula-pular]')?.addEventListener('click', e => { marcarAula(e.currentTarget.dataset.id, true); rota(); });
-  $app.querySelector('[data-ag=aula-volta]')?.addEventListener('click', () => { voltarAula(); rota(); });
   ligarTreinar();
   ligarTrilha();
   ligarRankingCrono();
@@ -1782,9 +1843,9 @@ function telaAulas(alvo) {
     </section>`).join('');
   $app.innerHTML = `
     <div class="titulo-linha"><h1>📺 Videoaulas</h1><span class="small muted">${vistas} de ${todas.length} vistas</span></div>
-    <p class="muted" style="margin-top:0">O cronograma põe ${aulasPorDia() === 1 ? 'uma aula por dia' : aulasPorDia() ? `${aulasPorDia()} aulas por dia` : 'aulas no dia (desligado em Ajustes)'} <b>antes das questões novas</b>, do tema cujas questões vêm a seguir. Aqui estão todas — dá para adiantar, marcar as que já viu ou pôr um tema na frente da fila.</p>
+    <p class="muted" style="margin-top:0">${aulasPorDia() ? 'No roteiro do dia, antes das questões de cada tema, aparece a aula dele <b>se você ainda não viu nenhuma aula do tema</b> (dá para pular).' : 'As aulas no roteiro do dia estão desligadas em Ajustes.'} Aqui estão todas — dá para adiantar, marcar as que já viu ou pôr um tema na frente da fila.</p>
     <section class="card">
-      <h2>Próximas no cronograma</h2>
+      <h2>Próximas aulas sugeridas</h2>
       ${fila.length ? `<ol class="aula-prox">${fila.slice(0, 6).map(v => `<li><a href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}"><b>${esc(v.t)}</b></a> <span class="small muted">· ${esc(rotuloAula(v.c))} · ${v.min} min — ${esc(v.motivo)}</span></li>`).join('')}</ol>` : '<p class="muted">Nenhuma aula na fila agora.</p>'}
     </section>
     <section class="card">
@@ -2009,6 +2070,7 @@ function telaEstudar() {
   // confere o bloco antes de mostrar: tira questões que deixaram de valer
   if (!s.avulsa && !s.res[s.i]) { podar(s); salvar(); if (s.i >= s.itens.length) return telaFimSessao(); }
   const item = s.itens[s.i];
+  if (ehPasso(item)) return telaPasso(s, item);   // roteiro do dia: aula antes de um tema ou abertura de fase
   const q = BYID[item.id];
   if (!q) { s.i++; salvar(); return telaEstudar(); }
   const res = s.res[s.i];
@@ -2023,14 +2085,20 @@ function telaEstudar() {
     : item.tr === 'foco' ? `<span class="chip tag-trilha" title="Tema em foco: ${esc(rotuloTema(temaDe(q.id)))}">📚 Foco</span>`
     : item.tr === 'passada' ? '<span class="chip tag-trilha" title="Questão nova de um tema que já passou pelo foco">↩ Tema passado</span>' : '<span class="chip">Nova</span>';
   // voltar para a questão anterior do bloco: só para rever — a resposta já registrada não muda
-  const anterior = !s.avulsa && s.i > 0 ? '<button class="btn fantasma" id="btn-ant" title="Rever a questão anterior (a resposta não muda) · tecla ←" aria-label="Questão anterior">←</button>' : '';
+  // roteiro do dia: em que parte você está (o tema, o reforço, as revisões) e quantas questões dela
+  let parteChip = '';
+  if (s.tipo === 'dia' && item.sec) {
+    const daParte = s.itens.map((x, k) => [x, k]).filter(([x]) => x.sec === item.sec && !ehPasso(x));
+    parteChip = `<span class="chip tag-parte">${esc(item.sec)} · ${daParte.findIndex(([, k]) => k === s.i) + 1}/${daParte.length}</span> `;
+  }
+  const anterior = !s.avulsa && s.i > 0 && !ehPasso(s.itens[s.i - 1]) ? '<button class="btn fantasma" id="btn-ant" title="Rever a questão anterior (a resposta não muda) · tecla ←" aria-label="Questão anterior">←</button>' : '';
 
   $app.innerHTML = `
     <div class="q-prog"><i style="width:${pct(s.i, s.itens.length)}%"></i></div>
     <div class="q-topo">
-      <div class="info">${chipArea(q.area)} ${rotulo}${res ? ' <span class="chip" title="Você já respondeu: dá para rever, não para mudar">🔒 Respondida</span>' : ''}</div>
+      <div class="info">${parteChip}${chipArea(q.area)} ${rotulo}${res ? ' <span class="chip" title="Você já respondeu: dá para rever, não para mudar">🔒 Respondida</span>' : ''}</div>
       <div class="info"><span class="timer" id="timer">0:00</span>
-        <span class="small muted">${s.avulsa ? '' : `${s.i + 1}/${s.itens.length}`}</span>
+        <span class="small muted">${s.avulsa ? '' : s.tipo === 'dia' ? `${s.itens.slice(0, s.i).filter(x => !ehPasso(x)).length + 1} de ${s.itens.filter(x => !ehPasso(x)).length}` : `${s.i + 1}/${s.itens.length}`}</span>
         <a class="btn mini" href="${s.de && s.de !== '#/estudar' ? s.de : '#/'}" title="Sair (o bloco fica salvo)">Sair</a></div>
     </div>
     <div class="q-titulo"><h2>${tituloQ(q)}</h2>
@@ -2250,24 +2318,26 @@ function telaFimSessao() {
     return;
   }
   const tipo = tipoDe(s);
+  const ehDia = tipo === 'dia';
+  if (ehDia && st.diaFim !== hoje()) { st.diaFim = hoje(); salvar(); }
   const daMeta = tipo === 'novas' && !s.extra;
   const falta = daMeta ? faltaMeta() : 0;
   // a próxima tarefa do cronograma de hoje que ainda falta (fora a deste bloco, que já tem o botão "mais")
   const p = plano();
-  const prox = agendaHoje(p, diaHoje(p)).find(x => !x.opcional && !x.feito && x.botao?.ir
+  const prox = ehDia ? null : agendaHoje(p, diaHoje(p)).find(x => !x.opcional && !x.feito && x.botao?.ir
     && x.id !== tipo);
   const temMais = tipo !== 'reforco' || reforcosPendentes().length > 0;
-  const outros = blocosAbertos().filter(x => x !== s && !(prox && chaveDe(x) === prox.id));
+  const outros = ehDia ? [] : blocosAbertos().filter(x => x !== s && !(prox && chaveDe(x) === prox.id));
   const voltar = s.de && s.de !== '#/estudar' ? s.de : '#/';
   const segBloco = s.res.reduce((t, r) => t + (r ? Math.min(r.seg || 0, 600) : 0), 0);
   const xpBloco = acertos * XP.acerto + (total - acertos) * XP.erro;
-  const comemora = total > 0 && (pct(acertos, total) >= 60 || (daMeta && !falta));
+  const comemora = ehDia || (total > 0 && (pct(acertos, total) >= 60 || (daMeta && !falta)));
   $app.innerHTML = `
     <section class="fim-bloco">
       ${comemora ? `<div class="confete" aria-hidden="true">${Array.from({ length: 46 }, (_, i) => `<i style="left:${(i * 37) % 100}%;width:${10 + (i % 3) * 4}px;border-radius:${i % 2 ? 3 : 7}px;background:${['#1877e0', '#23a047', '#f59a1b', '#8f52e8', '#ffc531', '#e0468f'][i % 6]};animation-duration:${(2.4 + (i % 7) * 0.35).toFixed(2)}s;animation-delay:${((i % 9) * 0.18).toFixed(2)}s"></i>`).join('')}</div>` : ''}
       <div class="fim-emoji">${!total ? '🙂' : comemora ? '🎉' : '💪'}</div>
-      <h1>${tipo === 'rev' ? 'Revisões concluídas!' : tipo === 'reforco' ? 'Reforço concluído!' : daMeta && !falta ? 'Meta de hoje batida!' : 'Bloco completo!'}</h1>
-      <p class="fim-sub">${total ? (daMeta ? (falta ? `Faltam ${falta} para a meta de hoje.` : 'Daqui pra frente é extra — e adianta o cronograma.') : comemora ? 'Mandou muito.' : 'Cada erro agora é uma questão a menos pra errar na prova.') : 'Nenhuma questão respondida.'}</p>
+      <h1>${ehDia ? 'Dia completo!' : tipo === 'rev' ? 'Revisões concluídas!' : tipo === 'reforco' ? 'Reforço concluído!' : daMeta && !falta ? 'Meta de hoje batida!' : 'Bloco completo!'}</h1>
+      <p class="fim-sub">${ehDia ? 'Tudo feito por hoje. Daqui pra frente é extra — e adianta o cronograma.' : total ? (daMeta ? (falta ? `Faltam ${falta} para a meta de hoje.` : 'Daqui pra frente é extra — e adianta o cronograma.') : comemora ? 'Mandou muito.' : 'Cada erro agora é uma questão a menos pra errar na prova.') : 'Nenhuma questão respondida.'}</p>
       ${total ? `<div class="fim-caixas">
         <div class="cor-ouro"><b>XP ganho</b><span>⚡ ${xpBloco}</span></div>
         <div class="cor-verde"><b>Acerto</b><span>🎯 ${pct(acertos, total)}%</span></div>
@@ -2278,7 +2348,7 @@ function telaFimSessao() {
       <div class="linha-btns" style="justify-content:center">
         ${prox ? `<button class="btn primario" data-acao="prox">Próxima tarefa: ${esc(prox.titulo)} →</button>` : ''}
         ${outros.length ? `<button class="btn ${prox ? '' : 'primario'}" data-acao="outro">Continuar ${NOME_BLOCO[chaveDe(outros[0])]} (${outros[0].i + 1}/${outros[0].itens.length})</button>` : ''}
-        ${temMais ? `<button class="btn ${outros.length || prox ? '' : 'primario'}" data-acao="mais">${tipo === 'rev' ? 'Mais revisões' : tipo === 'reforco' ? 'Mais reforço' : daMeta ? (falta ? `Fazer as ${falta} que faltam` : `Fazer ${st.cfg.bloco} extras`) : `Mais ${st.cfg.bloco}`}</button>` : ''}
+        ${temMais ? `<button class="btn ${outros.length || prox ? '' : 'primario'}" data-acao="mais">${ehDia ? `Fazer ${st.cfg.bloco} extras` : tipo === 'rev' ? 'Mais revisões' : tipo === 'reforco' ? 'Mais reforço' : daMeta ? (falta ? `Fazer as ${falta} que faltam` : `Fazer ${st.cfg.bloco} extras`) : `Mais ${st.cfg.bloco}`}</button>` : ''}
         <a class="btn ${outros.length || prox || temMais ? '' : 'primario'}" href="${voltar}">Voltar</a>
       </div>
     </section>
@@ -2286,7 +2356,7 @@ function telaFimSessao() {
       ${erros.map(it => { const q = BYID[it.id]; return `<li><div>${chipArea(q.area)} <span class="tit">${tituloQ(q)}</span></div><button class="btn" data-ver="${q.id}">Rever</button></li>`; }).join('')}
     </ul></section>` : ''}
   `;
-  $app.querySelector('[data-acao=mais]')?.addEventListener('click', () => (daMeta
+  $app.querySelector('[data-acao=mais]')?.addEventListener('click', () => (ehDia ? iniciar(st.cfg.bloco, 'novas', null, { extra: true }) : daMeta
     ? (falta ? iniciar(falta, 'novas') : iniciar(st.cfg.bloco, 'novas', null, { extra: true }))
     : iniciar(st.cfg.bloco, tipo, s.alvo, { extra: !!s.extra })));
   $app.querySelector('[data-acao=prox]')?.addEventListener('click', () => prox.botao.ir());
@@ -2891,7 +2961,7 @@ function telaAjustes() {
       <select id="bloco">${[5, 10, 15, 20, 30].map(n => `<option value="${n}" ${c.bloco === n ? 'selected' : ''}>${n} questões (~${n * 3} min)</option>`).join('')}</select>
       <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="red-crono" ${c.redacao !== false ? 'checked' : ''}> ✍️ Redação no cronograma</label></div>
       <label class="campo" for="aulas-dia">📺 Videoaulas no cronograma</label>
-      <select id="aulas-dia">${[[0, 'Desligado'], [1, '1 aula por dia (antes das questões novas)'], [2, '2 aulas por dia']].map(([n, t]) => `<option value="${n}" ${aulasPorDia() === n ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <select id="aulas-dia">${[[1, 'Ligadas: aula antes de cada tema novo do dia'], [0, 'Desligadas']].map(([n, t]) => `<option value="${n}" ${(aulasPorDia() ? 1 : 0) === n ? 'selected' : ''}>${t}</option>`).join('')}</select>
       <p class="small muted">A aula é do tema cujas questões vêm a seguir na trilha de focos (primeiro a 1ª aula de cada tema novo), alternando com a matemática básica. Dá para pular uma aula e ver todas na aba <a href="#/aulas">Aulas</a>.</p>
       <div class="dias" style="margin-top:12px"><label><input type="checkbox" id="sim-crono" ${c.simCrono !== false ? 'checked' : ''}> 📝 Simulados no cronograma</label></div>
       <p class="small muted">Ligado: um simulado curto por semana (de 10 a 30 questões, crescendo com a fase), alternando um misto e um desafio numa matéria em que você tem dificuldade. Ele ocupa o lugar das questões novas do dia.</p>
@@ -4678,7 +4748,7 @@ function telaRanking(arg) {
     const cls = x => x.id === uid ? 'rk-eu' : amigo.has(x.id) ? 'rk-amigo' : '';
     const item = x => `<li class="${cls(x)}">
         <div class="rk-nome"><span class="rk-pos">${x.pos}</span><span class="rk-ini cor-${corDe(x)}">${ini(x)}</span><span class="tit">${nome(x)}</span></div>
-        <div class="rk-dir"><b class="rk-n">${x.n}</b><span class="small muted">${x.n ? `${pct(x.ok, x.n)}%` : ''}</span></div></li>`;
+        <div class="rk-dir"><b class="rk-n" title="questões respondidas nesta semana">${x.n} <small class="muted">questões</small></b><span class="small muted" title="acerto nesta semana">${x.n ? `${pct(x.ok, x.n)}% de acerto` : ''}</span></div></li>`;
     // pódio: os 3 primeiros (2º, 1º, 3º, como num pódio de verdade); a lista segue do 4º
     const top = lista.slice(0, 3);
     const podio = g('rk-podio');
@@ -4765,6 +4835,8 @@ function mesclarLog(a, b) {
 // primeira: primeira sincronização deste aparelho — os ajustes vêm de quem tem mais questões feitas (um aparelho novo
 // tem "mod" recente só por ter sido aberto, e não deve trocar a data da prova e os dias de estudo da conta pelos padrões)
 function mesclarEstado(loc, rem, primeira) {
+  if ((rem.resetVer || 0) < RESET_VER) rem = { cfg: rem.cfg || {}, mod: 0 };   // progresso de antes do reset: não volta
+  if ((loc.resetVer || 0) < RESET_VER) loc = { ...rem, cfg: { ...rem.cfg, ...loc.cfg }, mod: 0 };
   const remNovo = primeira ? tentativasDe(rem) > tentativasDe(loc) : (rem.mod || 0) > (loc.mod || 0);
   const novo = remNovo ? rem : loc;
   const out = { ...loc, ...rem, ...novo };
@@ -5117,7 +5189,9 @@ function linhasRanking(d, n) {
   const on = st.ranking?.on, top = d.lista.slice(0, n), amigos = d.amigos || [];
   const amigo = new Set(amigos.map(x => x.id));
   const tipo = x => on && x.id === d.uid ? 'eu' : amigo.has(x.id) ? 'amigo' : '';
-  const linha = x => `<div class="tr-linha ${tipo(x)}"><b>${x.pos}</b><span class="tr-ini">${esc((x.apelido || '?')[0].toUpperCase())}</span><span class="tr-nome">${tipo(x) === 'eu' ? 'Você' : `${esc(x.apelido)}${tipo(x) ? ' ⭐' : ''}`}</span><span class="tr-n">${x.n}</span></div>`;
+  const linha = x => `<div class="tr-linha ${tipo(x)}"><b>${x.pos}</b><span class="tr-ini">${esc((x.apelido || '?')[0].toUpperCase())}</span><span class="tr-nome">${tipo(x) === 'eu' ? 'Você' : `${esc(x.apelido)}${tipo(x) ? ' ⭐' : ''}`}</span><span class="tr-n" title="${x.n} ${x.n === 1 ? 'questão respondida' : 'questões respondidas'} nesta semana">${x.n}</span></div>`;
+  // cabeçalho: o que é cada coluna (posição, nome, questões respondidas na semana)
+  const cab = '<div class="tr-linha tr-cab"><b>#</b><span></span><span class="tr-nome">Nome</span><span class="tr-n">Questões</span></div>';
   const fim = [];
   if (on && !top.some(x => x.id === d.uid)) {
     const eu = d.lista.find(x => x.id === d.uid) || (d.fora && { id: d.uid, pos: d.fora.pos, n: d.fora.n, apelido: st.ranking.apelido });
@@ -5126,7 +5200,7 @@ function linhasRanking(d, n) {
   for (const a of amigos) if (!top.some(x => x.id === a.id)) fim.push(a);
   fim.sort((a, b) => a.pos - b.pos);
   if (!top.length && !fim.length) return '<p class="small muted" style="margin:6px 0 0">Ninguém pontuou nesta semana ainda. Seja o primeiro!</p>';
-  return top.map(linha).join('') + (fim.length ? `<div class="tr-sep">⋯</div>${fim.map(linha).join('')}` : '');
+  return cab + top.map(linha).join('') + (fim.length ? `<div class="tr-sep">⋯</div>${fim.map(linha).join('')}` : '');
 }
 // card do ranking geral no cronograma (todo mundo entra sozinho; só fica fora quem escolheu sair)
 function cardRankingCrono() {

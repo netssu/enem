@@ -1165,3 +1165,27 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 .nq-n { flex: none; min-width: 22px; text-align: right; font: 800 15px var(--titulo); }
 .ag-aula.feito .aula-capa { opacity: .9; }
 .ag-aula.feito .aula-tit { color: var(--ink); }
+
+/* ---------- playlist de hoje (embaixo da aula do dia) ---------- */
+.pl-dia { margin-top: 12px; border-top: 2px solid var(--line); padding-top: 10px; }
+.pl-dia > summary { cursor: pointer; color: var(--muted); }
+.pl-lista { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; }
+.pl-lista li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 12px; min-width: 0; }
+.pl-lista li.atual { background: var(--soft, rgba(127, 127, 127, .1)); }
+.pl-lista li.vista { opacity: .6; }
+.pl-lista a { display: flex; flex-direction: column; text-decoration: none; color: inherit; min-width: 0; }
+.pl-lista a b { overflow-wrap: anywhere; }
+.pl-ic { flex: 0 0 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 11px; font-weight: 900; color: var(--c); }
+.pl-lista li.vista .pl-ic, .pl-lista li.atual .pl-ic { border-color: var(--c); }
+
+/* ---------- foco do momento dentro de "Questões novas" ---------- */
+.tr-dentro { margin-top: 10px; border-top: 2px solid var(--line); padding-top: 10px; }
+.tr-dentro > summary { cursor: pointer; }
+.tr-dentro .tr-lista { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+
+/* ---------- aviso "veja a aula antes" em cima da questão ---------- */
+.aula-antes { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 14px; margin: 0 0 12px; border: 2px solid var(--azul); }
+.aa-texto { display: flex; flex-direction: column; gap: 2px; flex: 1 1 260px; min-width: 0; }
+.aa-botoes { display: flex; flex-wrap: wrap; gap: 8px; }
+.aula-antes .player-aula { flex: 1 1 100%; }
+.ag-lista > .ag-item[data-item="novas"]:has(.tr-dentro) { grid-column: 1 / -1; }   /* com o foco do momento dentro: largura toda */

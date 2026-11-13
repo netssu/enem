@@ -1217,3 +1217,33 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 .ag-lista { display: flex; flex-wrap: wrap; align-items: flex-start; }
 .ag-lista > .ag-item { flex: 1 1 220px; min-width: 0; }
 .ag-lista > .ag-item[data-item="novas"]:has(.tr-dentro) { flex-basis: 100%; }   /* com o foco do momento dentro: largura toda */
+.tr-linha.tr-cab { padding-top: 0; padding-bottom: 2px; }
+.tr-linha.tr-cab > *, .tr-linha.tr-cab > b { font: 900 11px Nunito, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+/* ---------- roteiro do dia ---------- */
+.dia-card .dia-previa { margin-top: 4px; }
+.dia-linha .nq-ponto { width: 16px; height: 16px; display: grid; place-items: center; font-size: 10px; font-weight: 900; color: #fff; }
+.dia-linha.dia-fase .nq-ponto { background: var(--muted); }
+.dia-linha.feita { opacity: .55; }
+.dia-linha.feita .nq-ponto { background: var(--verde); }
+.dia-linha.atual .nq-tema b { color: var(--azul); }
+.dia-linha .nq-tema .muted { font-weight: 600; font-size: 12.5px; }
+.dia-aula { flex: none; font-size: 11.5px; font-weight: 900; padding: 1px 7px; border-radius: 99px; background: var(--verm-cl); color: var(--verm); }
+.dia-btn { width: 100%; margin-top: 14px; flex-direction: column; gap: 2px; }
+.dia-btn small { font: 700 12px Nunito, sans-serif; letter-spacing: 0; text-transform: none; opacity: .85; }
+.dia-card .tr-dentro { margin-top: 14px; }
+.chip.tag-parte { background: var(--azul-cl); color: var(--azul); border-color: transparent; font-weight: 800; }
+.passo { max-width: 720px; margin: 24px auto; padding: 28px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.passo h1 { margin: 0; font-size: 28px; }
+.passo-sobre { font: 900 12px Nunito, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--azul); }
+.passo-texto { margin: 0; max-width: 560px; color: var(--muted); font-weight: 600; line-height: 1.5; }
+.passo-video { width: 100%; max-width: 560px; margin-top: 8px; }
+.passo-video .aula-capa { width: 100%; }
+.passo-video p { margin: 6px 0 0; }
+.passo-video.tocando .aula-capa, .passo-video.tocando > p { display: none; }
+.passo-video .player-aula { margin: 0; text-align: left; }
+.passo-prog { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 6px; }
+.passo-prog .barra { display: block; width: 100%; }
+.passo-acoes { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 10px; }
+@media (max-width: 640px) { .passo { padding: 20px 16px; margin: 12px auto; } .passo h1 { font-size: 23px; } .passo-acoes > .btn { flex: 1 1 100%; } }
+.passo-video .aula-play { background: var(--verm); box-shadow: 0 4px 0 var(--verm-esc); }

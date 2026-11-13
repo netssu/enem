@@ -422,16 +422,43 @@ function filaAulas() {
   return out;
 }
 function areaDoTema(c) { return TEMAS.nomes[c]?.[0]; }
-// a aula da vez: fica a mesma o dia todo até você assistir ou pular (a fila pode mudar com as questões do dia)
-function aulaDaVez() {
+// ---- playlist do dia: as aulas dos temas das questões que você vai fazer HOJE (as novas até a meta e os reforços),
+// uma por tema — a próxima não vista dele —, os temas que você nunca estudou primeiro (e os mais cheios de questões).
+// Os temas pedidos (📌) vêm na frente. Se o dia não tiver questões (ou faltar aula), completa com a fila geral.
+// A playlist é montada uma vez por dia e fica fixa (responder questões não muda a lista).
+const PLAYLIST_MAX = 6;
+function temasDeHoje(p = plano()) {
+  const ab = sessaoDe('novas');
+  const qs = ab ? ab.itens.slice(ab.i).filter(x => x.tipo === 'nova' && !feita(x.id)).map(x => BYID[x.id]).filter(Boolean)
+    : p.retaFinal ? [] : filaNovas().slice(0, Math.max(0, p.meta - p.novasHoje));
+  const h = hoje();
+  for (const x of reforcosPendentes()) if (x.e.d < h) qs.push(x.q);
+  const cont = new Map();
+  for (const q of qs) { const c = temaDe(q.id); if (c) cont.set(c, (cont.get(c) || 0) + 1); }
+  return cont;   // tema -> quantas questões dele hoje (na ordem em que aparecem)
+}
+function montarPlaylist(p) {
+  const out = [], usado = new Set();
+  const poe = (v, m) => { if (v && !usado.has(v.id) && !aulaVista(v.id) && out.length < PLAYLIST_MAX) { usado.add(v.id); out.push([v.id, m]); } };
+  for (const c of st.aulaFila || []) poe(aulasDoTema(c).find(v => !aulaVista(v.id)), '📌 você pediu');
+  const cont = temasDeHoje(p);
+  const nunca = c => (aulasDoTema(c).some(v => aulaVista(v.id)) ? 1 : 0);
+  const temas = [...cont.keys()].filter(c => aulasDoTema(c).length).sort((a, b) => nunca(a) - nunca(b) || cont.get(b) - cont.get(a));
+  for (const c of temas) poe(aulasDoTema(c).find(v => !aulaVista(v.id)), `${cont.get(c)} ${cont.get(c) === 1 ? 'questão' : 'questões'} hoje`);
+  // a base de Matemática entra quando hoje tem Matemática; e a fila geral completa o mínimo do dia
+  if (temas.some(c => areaDoTema(c) === 'MT')) poe(filaAulas().find(v => BASE_NOME[v.c]), 'base de Matemática');
+  for (const v of filaAulas()) { if (out.length >= Math.max(1, aulasPorDia())) break; poe(v, v.motivo); }
+  return out;
+}
+function playlistDia(p = plano()) {
   const h = hoje(), d = st.aulaDia;
-  if (d?.d === h && d.id && AULA_INFO[d.id] && !aulaVista(d.id)) {
-    const f = filaAulas().find(x => x.id === d.id);
-    return f || { ...AULA_INFO[d.id], motivo: d.m || '' };
-  }
-  const v = filaAulas()[0] || null;
-  if (d?.d !== h || d.id !== v?.id) { st.aulaDia = { d: h, id: v?.id || null, m: v?.motivo || '' }; salvar(); }
-  return v;
+  if (d?.d !== h || !Array.isArray(d.l)) { st.aulaDia = { d: h, l: montarPlaylist(p) }; salvar(); }
+  return st.aulaDia.l.filter(([id]) => AULA_INFO[id]).map(([id, motivo]) => ({ ...AULA_INFO[id], motivo }));
+}
+// a aula da vez: a primeira da playlist ainda não vista; acabou a playlist, a próxima da fila geral (opcional)
+function aulaDaVez(p) {
+  const l = playlistDia(p);
+  return l.find(v => !aulaVista(v.id)) || filaAulas()[0] || null;
 }
 function marcarAula(id, pulou) {
   (st.aulas ||= {})[id] = pulou ? { d: hoje(), t: Date.now(), p: 1 } : { d: hoje(), t: Date.now() };
@@ -454,7 +481,8 @@ function voltarAula() {
   const id = ultimaAula();
   if (!id) return;
   delete st.aulas[id];
-  st.aulaDia = { d: hoje(), id, m: '' };
+  const l = playlistDia();
+  if (!l.some(v => v.id === id)) st.aulaDia.l.unshift([id, '']);   // volta para a playlist de hoje, na frente
   salvar();
 }
 // botão "aula do tema" na correção da questão: abre direto a próxima aula não vista do tema (ou a primeira)
@@ -463,6 +491,32 @@ function botaoAulaTema(q) {
   if (!l.length) return '';
   const v = l.find(x => !aulaVista(x.id)) || l[0];
   return `<a class="btn" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}" title="${esc(v.t)} · ${esc(v.canal)} · ${v.min} min">📺 Aula: ${esc(nomeTema(c))}</a>`;
+}
+
+// antes de responder uma questão de um tema cuja aula você ainda não viu: recomenda ver a aula agora.
+// "Já sei" marca a 1ª aula do tema como pulada (o tema não pede mais); "Agora não" cala o aviso desse tema hoje.
+function avisoAulaAntes(q, item, res) {
+  if (res || item.tipo === 'rev' || !aulasPorDia()) return '';
+  const c = temaDe(q.id), l = c ? aulasDoTema(c) : [];
+  if (!l.length || l.some(v => aulaVista(v.id)) || st.aulaAgoraNao?.[c] === hoje()) return '';
+  const v = l[0];
+  return `<div class="card aula-antes" data-tema="${c}">
+    <div class="aa-texto"><b>📺 Antes de responder: você ainda não viu a aula de ${esc(nomeTema(c))}</b>
+      <span class="small muted">${esc(v.t)} · ${esc(v.canal)} · ${v.min} min</span></div>
+    <div class="aa-botoes"><a class="btn mini primario" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Ver agora</a>
+      <button class="btn fantasma mini" type="button" data-aa="sei" data-id="${v.id}" title="Já conheço o assunto: não recomenda mais este tema">Já sei o assunto</button>
+      <button class="btn fantasma mini" type="button" data-aa="nao" title="Responder sem a aula (não pergunta mais hoje deste tema)">Agora não</button></div>
+  </div>`;
+}
+function ligarAvisoAula() {
+  const box = $app.querySelector('.aula-antes');
+  if (!box) return;
+  const some = () => { if (playerAtual && box.contains(playerAtual.el)) fecharPlayer(); box.remove(); };
+  box.querySelector('[data-aa=sei]').addEventListener('click', e => { marcarAula(e.currentTarget.dataset.id, true); some(); });
+  box.querySelector('[data-aa=nao]').addEventListener('click', () => {
+    st.aulaAgoraNao = { ...Object.fromEntries(Object.entries(st.aulaAgoraNao || {}).filter(([, d]) => d === hoje())), [box.dataset.tema]: hoje() };
+    salvar(); some();
+  });
 }
 
 // ---- player do YouTube dentro do site: qualquer link com data-tocar="id" abre o vídeo ali mesmo, embaixo de onde foi
@@ -504,7 +558,7 @@ function fecharPlayer() {
 // onde o player entra: no cartão da agenda (por dentro), numa lista (logo depois do item) ou no fim do card
 function lugarDoPlayer(btn) {
   const ag = btn.closest('.ag-item'), palco = document.querySelector('.ag-palco');
-  if (ag?.classList.contains('ag-aula')) return { host: ag, por: el => ag.appendChild(el) };   // aula do dia: no lugar da capa
+  if (ag?.classList.contains('ag-aula')) return { host: ag, por: el => { const h = ag.querySelector('.aula-hero'); if (h) h.after(el); else ag.appendChild(el); } };   // aula do dia: no lugar da capa
   if (ag && palco) return { host: null, por: el => palco.appendChild(el) };                    // outro cartão: em cima da grade
   if (ag) return { host: null, por: el => ag.appendChild(el) };
   const li = btn.closest('li');
@@ -1379,22 +1433,28 @@ function agendaHoje(p, f) {
   // videoaula do dia: antes das questões novas, de um tema cujas questões vêm a seguir (prepara para elas)
   const nAulas = aulasPorDia();
   if (nAulas > 0) {
-    const v = aulaDaVez(), vistas = vistasHoje();
-    if (v || vistas) {
-      const feito = vistas >= nAulas || !v;
+    const pl = playlistDia(p), v = aulaDaVez(p), vistas = vistasHoje();
+    const plVistas = pl.filter(x => aulaVista(x.id)).length;
+    if (v || vistas || pl.length) {
+      // feito: viu o mínimo do dia (das aulas da playlist, ou quantas forem) ou não sobrou aula na playlist
+      const feito = !v || (pl.length ? plVistas >= Math.min(nAulas, pl.length) : vistas >= nAulas);
+      const lista = pl.length > 1 ? `<details class="pl-dia" ${feito ? '' : 'open'}><summary class="small"><b>Playlist de hoje</b> · ${plVistas} de ${pl.length} vistas · ~${fmtDur(pl.filter(x => !aulaVista(x.id)).reduce((s, x) => s + x.min, 0))}</summary>
+          <ol class="pl-lista">${pl.map(x => `<li class="${aulaVista(x.id) ? 'vista' : ''} ${x.id === v?.id ? 'atual' : ''}">
+            <span class="pl-ic">${aulaVista(x.id) ? '✓' : x.id === v?.id ? '▶' : ''}</span>
+            <a href="${urlAula(x.id)}" target="_blank" rel="noopener" data-tocar="${x.id}" class="cresce"><b>${esc(x.t)}</b><span class="small muted">${esc(rotuloAula(x.c))} · ${x.min} min${x.motivo ? ` · ${esc(x.motivo)}` : ''}</span></a></li>`).join('')}</ol></details>` : '';
       const opcional = !feito && !!(!p.hojeEstuda || rdc.hoje || sim.hoje);   // folga, ou dia de redação/simulado (já é pesado)
       const todas = '<a class="aula-todas small" href="#/aulas">Todas as aulas →</a>';
-      // cartão largo em cima do "Hoje": capa do vídeo à esquerda (o player abre no lugar dela), texto e botões à direita
       const ant = ultimaAula();
       const voltar = ant ? `<button class="btn fantasma mini" type="button" data-ag="aula-volta" title="Volta para “${esc(AULA_INFO[ant].t)}” (desfaz o “Já assisti” ou o “Pular”)">← Anterior</button>` : '';
       // cartão largo em cima do "Hoje": capa do vídeo à esquerda (o player abre no lugar dela), texto e botões à direita.
-      // Vista a aula do dia, o cartão continua com a capa da próxima (opcional)
+      // Embaixo, a playlist de hoje (as aulas dos temas das questões do dia). Vista a playlist, o cartão continua com a
+      // capa da próxima aula da fila geral (opcional)
       const html = v ? `<div class="aula-hero">
           <a class="aula-capa" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}" title="Assistir aqui">
             <img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="" loading="lazy"><span class="aula-play">▶</span><span class="aula-dur">${v.min} min</span></a>
           <div class="aula-info">
-            <span class="aula-sobre">${feito ? `✓ ${vistas} ${vistas === 1 ? 'aula vista' : 'aulas vistas'} hoje · próxima (opcional)`
-              : `📺 Aula do dia · antes das questões${nAulas > 1 ? ` · ${vistas + 1} de ${nAulas}` : ''}${opcional ? ' <span class="chip">opcional</span>' : ''}`}</span>
+            <span class="aula-sobre">${feito ? `✓ ${vistas} ${vistas === 1 ? 'aula vista' : 'aulas vistas'} hoje · próxima${pl.some(x => x.id === v.id) ? ' da playlist' : ''} (opcional)`
+              : `📺 Playlist de hoje · antes das questões${pl.length > 1 ? ` · ${plVistas + 1} de ${pl.length}` : ''}${opcional ? ' <span class="chip">opcional</span>' : ''}`}</span>
             <b class="aula-tit">${esc(v.t)}</b>
             <span class="aula-tema">${esc(rotuloAula(v.c))}</span>
             <span class="aula-meta">${esc(v.canal)}${v.motivo ? ` · ${esc(v.motivo)}` : ''}</span>
@@ -1403,11 +1463,11 @@ function agendaHoje(p, f) {
               <button class="btn mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>
               <button class="btn fantasma mini" type="button" data-ag="aula-pular" data-id="${v.id}" title="Já sei este assunto: passa para a próxima aula">Pular</button>
               ${voltar}${todas}</div>
-          </div></div>`
+          </div></div>${lista}`
         : `<div class="aula-hero compacta">
           <span class="ag-icone">✓</span>
           <div class="aula-info"><b>${vistas > 1 ? `${vistas} videoaulas vistas hoje` : vistas ? 'Aula de hoje vista' : 'Nenhuma aula na fila'}</b></div>
-          <div class="aula-botoes">${voltar}${todas}</div></div>`;
+          <div class="aula-botoes">${voltar}${todas}</div></div>${lista}`;
       itens.push({ id: 'aula', icone: '📺', titulo: v && !feito ? v.t : 'Videoaula', min: feito ? 0 : v.min, feito, opcional, html });
     }
   }
@@ -1416,8 +1476,8 @@ function agendaHoje(p, f) {
     itens.push({
       id: 'novas', icone: '➕', titulo: 'Questões novas',
       nota: `${p.novasHoje} de ${p.meta}${p.novasHoje > p.meta ? ` (+${p.novasHoje - p.meta})` : ''}`,
-      corpo: falta ? previaNovas(novasAberta ? novasAberta.itens.slice(novasAberta.i).filter(x => x.tipo === 'nova' && !feita(x.id)).map(x => BYID[x.id]).filter(Boolean)
-        : filaNovas().slice(0, falta)) : '',
+      corpo: (falta ? previaNovas(novasAberta ? novasAberta.itens.slice(novasAberta.i).filter(x => x.tipo === 'nova' && !feita(x.id)).map(x => BYID[x.id]).filter(Boolean)
+        : filaNovas().slice(0, falta)) : '') + cardTrilha(p, true),
       min: falta * 3, feito: falta === 0, frac: p.novasHoje / p.meta,
       botao: novasAberta ? { rotulo: `Continuar (${novasAberta.i + 1}/${novasAberta.itens.length})`, ir: () => retomar('novas') }
         : { rotulo: `Fazer as ${falta}`, ir: () => iniciar(falta, 'novas') },
@@ -1554,7 +1614,7 @@ function telaInicio() {
     ${cardFoco()}
     ${agendaHTML(p, f, itens)}
     ${cardRankingCrono()}
-    ${cardTrilha(p)}
+    ${itens.some(x => x.id === 'novas') ? '' : cardTrilha(p)}
     ${cardSemanaMes(p)}
     ${semanasAteProvaHTML(p)}
     ${prontidaoHTML()}
@@ -1638,7 +1698,8 @@ function telaQuestoes() {
 
 // ---- trilha de focos no cronograma: o tema em foco de cada área, quanto falta, o próximo e a trilha inteira
 const COR_AREA = { LC: 'azul', CH: 'laranja', CN: 'verde', MT: 'roxo' };
-function cardTrilha(p) {
+// dentro = true: vai dentro do item "Questões novas" do Hoje (fechado, abre para ver os temas, Treinar e Pular)
+function cardTrilha(p, dentro = false) {
   if (!trilhaLigada() || p.retaFinal) return '';
   const ct = contagemTemas();
   const areas = st.cfg.areas.length ? st.cfg.areas : ORDEM_AREAS;
@@ -1670,11 +1731,18 @@ function cardTrilha(p) {
       <p class="small muted">${giro < 4 ? 'Depois deste giro: um giro só de revisões, tema por tema, com as questões novas que sobrarem de cada um.' : ''}</p>
     </details>`;
   }).join('');
+  const explica = `Em cada área, <b>2 de cada 3</b> questões novas vêm do tema em foco; a outra, de um tema que já passou (o que você viu há mais tempo). Cada tema guarda questões para voltar nas revisões — a cada 3 temas, uma revisão de um antigo.`;
+  const miolo = `<ul class="tr-lista">${linhas}</ul>
+    <details class="tr-mais"><summary class="small">Ver a trilha completa</summary>${toda}</details>`;
+  if (dentro) {
+    const temas = areas.map(a => etapaAtual(a, ct)).filter(Boolean).map(e => nomeTema(e.c));
+    return `<details class="trilha tr-dentro"><summary><b>📚 Foco do momento</b> <span class="small muted">${esc(temas.join(' · '))}</span></summary>
+      <p class="small muted" style="margin:6px 0 0">${explica}</p>${miolo}</details>`;
+  }
   return `<section class="card trilha">
     <div class="titulo-linha"><h2>📚 Foco do momento</h2></div>
-    <p class="small muted" style="margin-top:0">Em cada área, <b>2 de cada 3</b> questões novas vêm do tema em foco; a outra, de um tema que já passou (o que você viu há mais tempo). Cada tema guarda questões para voltar nas revisões — a cada 3 temas, uma revisão de um antigo.</p>
-    <ul class="tr-lista">${linhas}</ul>
-    <details class="tr-mais"><summary class="small">Ver a trilha completa</summary>${toda}</details>
+    <p class="small muted" style="margin-top:0">${explica}</p>
+    ${miolo}
   </section>`;
 }
 function ligarTrilha() {
@@ -1965,6 +2033,7 @@ function telaEstudar() {
     </div>
     <div class="q-titulo"><h2>${tituloQ(q)}</h2>
       <span class="ferramentas">${linkProva(q) ? `<a class="btn mini" href="${linkProva(q)}" target="_blank" rel="noopener" title="Abrir a página ${q.pag} da prova original">📄 Prova</a>` : ''}${controlesTamanho()}</span></div>
+    ${avisoAulaAntes(q, item, res)}
     <div class="questao-img">${imgsHTML(q)}</div>
     <div id="dica"></div>
     <div id="feedback"></div>
@@ -1981,6 +2050,7 @@ function telaEstudar() {
     </div>
   `;
   ligarTamanho(q.id, (r?.h?.length || 0) - (res && !res.pulou ? 1 : 0));
+  ligarAvisoAula();
   // pré-carrega a próxima
   const prox = s.itens[s.i + 1];
   if (prox && BYID[prox.id]) BYID[prox.id].imgs.forEach(src => { const im = new Image(); im.src = src; });
@@ -4414,6 +4484,10 @@ function carregarFirebase() {
     const a = app.initializeApp(FIREBASE);
     const au = auth.getAuth(a);
     await au.authStateReady();
+    const u = au.currentUser;
+    if (conta && u && !u.isAnonymous && u.uid === conta.uid && u.displayName && conta.nome !== u.displayName) {
+      conta.nome = u.displayName; salvarConta(); garantirRanking();
+    }
     return { au, auth, fs, db: fs.getFirestore(a) };
   })().catch(e => { fbP = null; throw e; });
   return fbP;
@@ -4482,10 +4556,20 @@ function limparCodigo(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-
 function linkCodigo(cod) { return `${location.origin}${location.pathname}#/ranking/${cod}`; }
 // todo mundo com conta entra sozinho no ranking geral, com um apelido gerado (dá para trocar);
 // só fica fora quem escolheu sair. As ligas antigas viraram "acompanhar códigos".
+// nome que aparece no ranking: o nome da conta Google (até 20 letras: nome e sobrenome, ou só o nome)
+function nomeRanking(n) {
+  const p = String(n || '').trim().replace(/\s+/g, ' ');
+  if (p.length <= 20) return p.length >= 2 ? p : '';
+  const w = p.split(' '), dois = `${w[0]} ${w[w.length - 1]}`;
+  return (dois.length <= 20 ? dois : w[0].slice(0, 20));
+}
+const APELIDO_AUTO = /^Estudante [A-Z0-9]{6}$/;   // o apelido gerado antes (troca pelo nome do Google)
 function garantirRanking() {
   if (!FIREBASE || !conta?.uid) return;
   const r = st.ranking || {};
-  const novo = { on: r.on || !r.saiu, apelido: r.apelido || `Estudante ${meuCodigo()}`, seguindo: Array.isArray(r.seguindo) ? r.seguindo : [], ...(r.saiu && !r.on ? { saiu: true } : {}) };
+  const google = nomeRanking(conta.nome);
+  const apelido = (!r.apelido || APELIDO_AUTO.test(r.apelido)) && google ? google : r.apelido || `Estudante ${meuCodigo()}`;
+  const novo = { on: r.on || !r.saiu, apelido, seguindo: Array.isArray(r.seguindo) ? r.seguindo : [], ...(r.saiu && !r.on ? { saiu: true } : {}) };
   if (JSON.stringify(novo) !== JSON.stringify(st.ranking)) { st.ranking = novo; salvar(); }
 }
 
@@ -4502,7 +4586,7 @@ function telaRanking(arg) {
       <h1>Ranking</h1>
       <section class="card destaque">
         <h2>🏆 Você está fora do ranking</h2>
-        <p>Você escolheu não aparecer. O ranking geral mostra quem fez mais questões de segunda a domingo — só o apelido, nunca o nome ou o e-mail.</p>
+        <p>Você escolheu não aparecer. O ranking geral mostra quem fez mais questões de segunda a domingo — com o nome da sua conta Google (ou o apelido que você escolher), nunca o e-mail.</p>
         <div class="linha-btns"><button class="btn primario" id="rk-voltar">Voltar ao ranking</button></div>
       </section>`;
     g('rk-voltar').addEventListener('click', () => { st.ranking = { ...r, on: true }; delete st.ranking.saiu; rkEnviado = ''; rkCache = null; salvar(); telaRanking(arg); });
@@ -4537,8 +4621,8 @@ function telaRanking(arg) {
     </section>
     <section class="card">
       <h2>Você no ranking</h2>
-      <p class="small muted" style="margin-top:0">Todo mundo com conta aparece no ranking geral, só com o apelido — nunca o seu nome ou e-mail. O placar é enviado sozinho enquanto você estuda.</p>
-      <label class="campo" for="rk-apelido">Apelido</label>
+      <p class="small muted" style="margin-top:0">Todo mundo com conta aparece no ranking geral, com o nome da conta Google — dá para trocar por um apelido aqui embaixo. O e-mail nunca aparece. O placar é enviado sozinho enquanto você estuda.</p>
+      <label class="campo" for="rk-apelido">Nome no ranking</label>
       <div class="rk-add"><input type="text" id="rk-apelido" maxlength="20" value="${esc(r.apelido || '')}" autocomplete="off"><button class="btn" id="rk-salvar">Salvar</button></div>
       <p class="small" id="rk-erro-ap" style="color:var(--erro)" hidden></p>
       <div class="linha-btns"><button class="btn perigo mini" id="rk-sair">Não aparecer no ranking</button></div>
@@ -4817,7 +4901,8 @@ async function entrarGoogle() {
       cred = await f.auth.signInWithCredential(f.au, c);
     }
   } else cred = await f.auth.signInWithPopup(f.au, prov);
-  conta = { uid: cred.user.uid, email: cred.user.email || '', rev: null };
+  conta = { uid: cred.user.uid, email: cred.user.email || '', nome: cred.user.displayName || '', rev: null };
+  garantirRanking();
   salvarConta();
   rkEnviado = '';
   await syncJa();
@@ -4886,7 +4971,7 @@ function telaEntrar() {
         <button class="btn entrar-google" id="entrar-google"><b aria-hidden="true">G</b>Continuar com Google</button>
         ${temProgresso ? '<button class="btn fantasma" id="entrar-backup" type="button">⬇ Baixar uma cópia do meu progresso antes</button>' : ''}
         <p class="small" id="entrar-erro" style="color:var(--erro);margin:0" hidden></p>
-        <p class="small muted" style="margin:0">Com a conta, o progresso fica salvo na nuvem e abre igual no celular e no computador. No ranking da semana você aparece só com um apelido (dá para trocar ou sair) — nunca o seu nome ou e-mail. As chaves de API das IAs ficam só no seu aparelho.</p>
+        <p class="small muted" style="margin:0">Com a conta, o progresso fica salvo na nuvem e abre igual no celular e no computador. No ranking da semana você aparece com o nome da conta Google (dá para trocar por um apelido ou sair) — nunca o e-mail. As chaves de API das IAs ficam só no seu aparelho.</p>
       </div></div>
     </div>`;
   carregarFirebase().catch(() => { /* sem rede: o botão tenta de novo */ });   // o popup do Google abre direto no clique

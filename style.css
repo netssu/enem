@@ -1166,17 +1166,42 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 .ag-aula.feito .aula-capa { opacity: .9; }
 .ag-aula.feito .aula-tit { color: var(--ink); }
 
-/* ---------- playlist de hoje (embaixo da aula do dia) ---------- */
-.pl-dia { margin-top: 12px; border-top: 2px solid var(--line); padding-top: 10px; }
-.pl-dia > summary { cursor: pointer; color: var(--muted); }
-.pl-lista { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; }
-.pl-lista li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 12px; min-width: 0; }
-.pl-lista li.atual { background: var(--soft, rgba(127, 127, 127, .1)); }
-.pl-lista li.vista { opacity: .6; }
-.pl-lista a { display: flex; flex-direction: column; text-decoration: none; color: inherit; min-width: 0; }
-.pl-lista a b { overflow-wrap: anywhere; }
-.pl-ic { flex: 0 0 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 11px; font-weight: 900; color: var(--c); }
-.pl-lista li.vista .pl-ic, .pl-lista li.atual .pl-ic { border-color: var(--c); }
+/* ---------- aula do dia mais enxuta: mesmo tamanho de letra e de botão dos outros cartões do "Hoje" ---------- */
+.ag-aula { padding: 14px 16px; }
+.ag-aula .aula-hero { gap: 14px; }
+.ag-aula .aula-capa { flex-basis: 176px; border-radius: 12px; }
+.ag-aula .aula-play { width: 40px; height: 40px; font-size: 16px; padding-left: 3px; box-shadow: 0 3px 0 var(--c-esc); }
+.ag-aula .aula-dur { font-size: 11px; right: 6px; bottom: 6px; }
+.ag-aula .aula-info { gap: 3px; }
+.ag-aula .aula-sobre { font-size: 11px; }
+.ag-aula .aula-tit { font: 900 16px/1.25 Nunito, sans-serif; }
+.ag-aula .aula-meta { font-size: 13px; font-weight: 600; }
+.ag-aula .aula-botoes { margin-top: 6px; gap: 6px; }
+.ag-aula .aula-play-btn { background: var(--c); border-color: var(--c); color: #fff; box-shadow: 0 3px 0 var(--c-esc); }
+.ag-aula .aula-play-btn:hover { color: #fff; filter: brightness(1.05); }
+.ag-aula .aula-todas { font-size: 13px; }
+@media (max-width: 640px) {   /* celular: capa pequena ao lado do título, botões embaixo de tudo */
+  .ag-aula .aula-hero:not(.compacta) { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px 12px; align-items: start; }
+  .ag-aula .aula-hero:not(.compacta) .aula-info { display: contents; }
+  .ag-aula .aula-capa { width: 112px; grid-row: 1 / span 3; border-radius: 10px; }
+  .ag-aula .aula-play { width: 30px; height: 30px; font-size: 12px; }
+  .ag-aula .aula-dur { display: none; }
+  .ag-aula .aula-sobre, .ag-aula .aula-tit, .ag-aula .aula-meta { grid-column: 2; }
+  .ag-aula .aula-tit { font-size: 15px; }
+  .ag-aula .aula-meta { font-size: 12px; }
+  .ag-aula .aula-botoes { grid-column: 1 / -1; margin-top: 0; }
+}
+
+/* ---------- playlist de hoje: no mesmo visual do "O que vem agora" ---------- */
+.pl-dia { margin-top: 12px; }
+.pl-dia > summary { cursor: pointer; list-style-position: inside; }
+.pl-dia > ul { margin-top: 2px; }
+.pl-linha .nq-tema { color: var(--ink); text-decoration: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pl-linha .nq-tema:hover { color: var(--c); }
+.pl-linha.atual .nq-tema { color: var(--c); }
+.pl-linha.vista { opacity: .55; }
+.pl-linha.atual .nq-ponto { box-shadow: 0 0 0 3px var(--c-cl); }
+.pl-min { flex: none; font-size: 12px; font-weight: 700; color: var(--muted); }
 
 /* ---------- foco do momento dentro de "Questões novas" ---------- */
 .tr-dentro { margin-top: 10px; border-top: 2px solid var(--line); padding-top: 10px; }
@@ -1188,4 +1213,7 @@ pre.falha { white-space: pre-wrap; word-break: break-word; padding: 12px 14px; b
 .aa-texto { display: flex; flex-direction: column; gap: 2px; flex: 1 1 260px; min-width: 0; }
 .aa-botoes { display: flex; flex-wrap: wrap; gap: 8px; }
 .aula-antes .player-aula { flex: 1 1 100%; }
-.ag-lista > .ag-item[data-item="novas"]:has(.tr-dentro) { grid-column: 1 / -1; }   /* com o foco do momento dentro: largura toda */
+/* cartões do "Hoje" em linhas que se esticam (um cartão sozinho na linha ocupa a largura toda, sem buraco ao lado) */
+.ag-lista { display: flex; flex-wrap: wrap; align-items: flex-start; }
+.ag-lista > .ag-item { flex: 1 1 220px; min-width: 0; }
+.ag-lista > .ag-item[data-item="novas"]:has(.tr-dentro) { flex-basis: 100%; }   /* com o foco do momento dentro: largura toda */

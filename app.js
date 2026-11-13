@@ -1438,10 +1438,13 @@ function agendaHoje(p, f) {
     if (v || vistas || pl.length) {
       // feito: viu o mínimo do dia (das aulas da playlist, ou quantas forem) ou não sobrou aula na playlist
       const feito = !v || (pl.length ? plVistas >= Math.min(nAulas, pl.length) : vistas >= nAulas);
-      const lista = pl.length > 1 ? `<details class="pl-dia" ${feito ? '' : 'open'}><summary class="small"><b>Playlist de hoje</b> · ${plVistas} de ${pl.length} vistas · ~${fmtDur(pl.filter(x => !aulaVista(x.id)).reduce((s, x) => s + x.min, 0))}</summary>
-          <ol class="pl-lista">${pl.map(x => `<li class="${aulaVista(x.id) ? 'vista' : ''} ${x.id === v?.id ? 'atual' : ''}">
-            <span class="pl-ic">${aulaVista(x.id) ? '✓' : x.id === v?.id ? '▶' : ''}</span>
-            <a href="${urlAula(x.id)}" target="_blank" rel="noopener" data-tocar="${x.id}" class="cresce"><b>${esc(x.t)}</b><span class="small muted">${esc(rotuloAula(x.c))} · ${x.min} min${x.motivo ? ` · ${esc(x.motivo)}` : ''}</span></a></li>`).join('')}</ol></details>` : '';
+      // a lista no mesmo visual do "O que vem agora" das questões novas: uma linha por aula, com a cor da área
+      const restoMin = pl.filter(x => !aulaVista(x.id)).reduce((s, x) => s + x.min, 0);
+      const lista = pl.length > 1 ? `<details class="pl-dia nq-previa" ${feito ? '' : 'open'}><summary class="nq-cab">Playlist de hoje · ${plVistas} de ${pl.length} vistas${restoMin ? ` · ~${fmtDur(restoMin)}` : ''}</summary>
+          <ul>${pl.map(x => `<li class="nq-linha pl-linha ${BASE_NOME[x.c] ? 'MT' : areaDoTema(x.c) || ''} ${aulaVista(x.id) ? 'vista' : ''} ${x.id === v?.id ? 'atual' : ''}">
+            <span class="nq-ponto"></span>
+            <a class="nq-tema" href="${urlAula(x.id)}" target="_blank" rel="noopener" data-tocar="${x.id}" title="${esc(rotuloAula(x.c))} · ${esc(x.canal)}${x.motivo ? ` · ${esc(x.motivo)}` : ''}">${aulaVista(x.id) ? '✓ ' : ''}${esc(x.t)} <span class="muted">· ${esc(BASE_NOME[x.c] || nomeTema(x.c))}</span></a>
+            <span class="pl-min">${x.min} min</span></li>`).join('')}</ul></details>` : '';
       const opcional = !feito && !!(!p.hojeEstuda || rdc.hoje || sim.hoje);   // folga, ou dia de redação/simulado (já é pesado)
       const todas = '<a class="aula-todas small" href="#/aulas">Todas as aulas →</a>';
       const ant = ultimaAula();
@@ -1456,10 +1459,9 @@ function agendaHoje(p, f) {
             <span class="aula-sobre">${feito ? `✓ ${vistas} ${vistas === 1 ? 'aula vista' : 'aulas vistas'} hoje · próxima${pl.some(x => x.id === v.id) ? ' da playlist' : ''} (opcional)`
               : `📺 Playlist de hoje · antes das questões${pl.length > 1 ? ` · ${plVistas + 1} de ${pl.length}` : ''}${opcional ? ' <span class="chip">opcional</span>' : ''}`}</span>
             <b class="aula-tit">${esc(v.t)}</b>
-            <span class="aula-tema">${esc(rotuloAula(v.c))}</span>
-            <span class="aula-meta">${esc(v.canal)}${v.motivo ? ` · ${esc(v.motivo)}` : ''}</span>
+            <span class="aula-meta">${esc(rotuloAula(v.c))} · ${esc(v.canal)}${v.motivo ? ` · ${esc(v.motivo)}` : ''}</span>
             <div class="aula-botoes">
-              <a class="btn ${feito ? 'mini' : 'ag-btn'}" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir aqui</a>
+              <a class="btn mini ${feito ? '' : 'aula-play-btn'}" href="${urlAula(v.id)}" target="_blank" rel="noopener" data-tocar="${v.id}">▶ Assistir aqui</a>
               <button class="btn mini" type="button" data-ag="aula-vi" data-id="${v.id}">✓ Já assisti</button>
               <button class="btn fantasma mini" type="button" data-ag="aula-pular" data-id="${v.id}" title="Já sei este assunto: passa para a próxima aula">Pular</button>
               ${voltar}${todas}</div>
